@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>いまここ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* --c-line* は路線データから JS で上書き */
+  --c-line:#F26522; --c-line-soft:#FDE3D4; --c-line-dark:#FF7A3D; --c-line-dark-soft:#3A2418;
+  --line:var(--c-line);
+  --line-soft:var(--c-line-soft);
+  --board:#FFFFFF;
+  --page:#EEF0F2;
+  --ink:#23272D;
+  --muted:#6B7280;
+  --rule:#D5D9DE;
+  --ok:#1F9D55;
+  color-scheme:light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --line:var(--c-line-dark); --line-soft:var(--c-line-dark-soft); --board:#24272C; --page:#17191C;
+    --ink:#F1F2F4; --muted:#A3A9B2; --rule:#3A3F46; --ok:#4ADE80; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --line:var(--c-line-dark); --line-soft:var(--c-line-dark-soft); --board:#24272C; --page:#17191C;
+  --ink:#F1F2F4; --muted:#A3A9B2; --rule:#3A3F46; --ok:#4ADE80; color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{
+  margin:0;background:var(--page);color:var(--ink);
+  font-family:"Noto Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+main{max-width:520px;margin:0 auto;padding:14px 14px 32px}
+
+.status{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);padding:2px 4px 10px}
+.status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:1px}
+.status.live .dot{background:var(--ok)}
+
+/* 駅名標 */
+.sign{background:var(--board);border-radius:10px;overflow:hidden;box-shadow:0 1px 0 var(--rule)}
+.sign-top{padding:18px 18px 12px;text-align:center}
+.lead{font-size:14px;color:var(--muted);min-height:20px}
+.name{font-size:clamp(44px,14vw,64px);font-weight:900;letter-spacing:.04em;line-height:1.1;margin:2px 0}
+.kana{font-size:15px;color:var(--muted);letter-spacing:.12em;min-height:22px}
+.band{background:var(--line);height:34px;position:relative;margin-top:12px}
+.track{position:absolute;left:18px;right:18px;top:50%;height:4px;margin-top:-2px;background:rgba(255,255,255,.55);border-radius:2px}
+.train{position:absolute;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#fff;border:5px solid var(--ink);transition:left .8s ease;left:0}
+.ends{display:flex;justify-content:space-between;padding:10px 16px 14px;font-size:17px;font-weight:700;gap:8px}
+.ends span{max-width:48%}
+.ends .r{text-align:right}
+.ends small{display:block;font-size:12px;font-weight:400;color:var(--muted)}
+.remain{text-align:center;font-size:14px;color:var(--muted);padding:0 16px 16px;min-height:20px}
+
+/* 方面 */
+.seg{display:flex;margin:14px 0 4px;background:var(--board);border-radius:8px;padding:3px}
+.seg button{flex:1;border:0;background:none;color:var(--ink);font:inherit;font-size:14px;padding:9px 4px;border-radius:6px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--line);color:#fff;font-weight:700}
+
+.actions{display:flex;gap:8px;margin:12px 0}
+.actions button{flex:1;font:inherit;font-size:15px;font-weight:700;padding:13px 8px;border-radius:8px;border:2px solid var(--line);background:var(--line);color:#fff;cursor:pointer}
+.actions button.ghost{background:transparent;color:var(--ink);border-color:var(--rule)}
+button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.msg{font-size:13px;color:var(--muted);margin:0 4px 12px;line-height:1.6}
+
+/* 路線図 */
+.route{background:var(--board);border-radius:10px;padding:10px 0;list-style:none;margin:0}
+.route li{position:relative;display:flex;align-items:center;gap:12px;padding:7px 16px 7px 44px;font-size:16px}
+.route li::before{content:"";position:absolute;left:24px;top:0;bottom:0;width:5px;background:var(--line);transform:translateX(-50%)}
+.route li:first-child::before{top:50%}
+.route li:last-child::before{bottom:50%}
+.route li::after{content:"";position:absolute;left:24px;top:50%;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;border-radius:50%;background:var(--board);border:3px solid var(--line)}
+.route li.past{color:var(--muted)}
+.route li.past::before{background:var(--rule)}
+.route li.cur{font-weight:900}
+.route li.cur::after{background:var(--ink);border-color:var(--ink)}
+.route li.gap{height:0;padding:0;overflow:visible}
+.route li.gap::after{display:none}
+.route li .me{position:absolute;left:24px;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#fff;border:4px solid var(--ink);top:50%;z-index:1}
+.route li .tag{margin-left:auto;font-size:12px;color:var(--line);font-weight:700}
+@media (prefers-reduced-motion:reduce){.train{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <div class="status" id="status"><span><span class="dot"></span><span id="statusText">位置情報オフ</span></span><span id="acc"></span></div>
+
+  <section class="sign" aria-live="polite">
+    <div class="sign-top">
+      <div class="lead" id="lead">位置情報を開始してください</div>
+      <div class="name" id="name"></div>
+      <div class="kana" id="kana"></div>
+    </div>
+    <div class="band"><div class="track"><div class="train" id="train"></div></div></div>
+    <div class="ends"><span id="endL"></span><span class="r" id="endR"></span></div>
+    <div class="remain" id="remain"></div>
+  </section>
+
+  <div class="seg" role="group" aria-label="進行方向">
+    <button data-dir="auto" aria-pressed="true">自動</button>
+    <button data-dir="1" aria-pressed="false" id="dirFwd"></button>
+    <button data-dir="-1" aria-pressed="false" id="dirBack"></button>
+  </div>
+
+  <div class="actions">
+    <button id="startBtn">位置情報を開始</button>
+    <button id="demoBtn" class="ghost">デモ走行</button>
+  </div>
+  <p class="msg" id="msg">画面を点けたままにすると更新が続きます。地下や高架下では位置がずれることがあります。</p>
+
+  <ol class="route" id="route"></ol>
+</main>
+
+<script>
+// 路線データは lines/<id>.js（index.html?line=<id>、省略時は武蔵野線）
+const DEFAULT_LINE = "musashino";
+const NEAR_M = 180, OFF_M = 1500;
+const $ = id => document.getElementById(id);
+let LINE, ST, P, LAT0, LNG0, COSLAT;
+let dirMode = "auto", autoDir = 0, lastPos = null, watchId = null, demoTimer = null, wakeLock = null;
+
+function xy(lat,lng){ // 始発駅基準のメートル座標
+  return [(lng-LNG0)*111320*COSLAT, (lat-LAT0)*110540];
+}
+
+function locate(lat,lng){
+  const [x,y] = xy(lat,lng);
+  let best = null;
+  for(let i=0;i<P.length-1;i++){
+    const [ax,ay]=P[i],[bx,by]=P[i+1],dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy;
+    let t=((x-ax)*dx+(y-ay)*dy)/L2; t=Math.max(0,Math.min(1,t));
+    const px=ax+t*dx, py=ay+t*dy, d=Math.hypot(x-px,y-py);
+    if(!best||d<best.d) best={i,t,d,len:Math.sqrt(L2)};
+  }
+  return best;
+}
+
+function showLineIdle(){
+  $("name").textContent=LINE.name;
+  $("kana").textContent=`${ST[0][1]} ― ${ST[ST.length-1][1]}`;
+}
+
+function render(loc){
+  const pos = loc.i + loc.t;
+  if(lastPos!==null && Math.abs(pos-lastPos)>0.02) autoDir = pos>lastPos?1:-1;
+  lastPos = pos;
+  const dir = dirMode==="auto" ? (autoDir||1) : +dirMode;
+
+  const a=ST[loc.i], b=ST[loc.i+1];
+  const distA = loc.t*loc.len, distB=(1-loc.t)*loc.len;
+  let atIdx = -1;
+  if(distA<NEAR_M) atIdx=loc.i; else if(distB<NEAR_M) atIdx=loc.i+1;
+
+  const offRoute = loc.d > OFF_M;
+  if(offRoute){
+    $("lead").textContent="路線から離れています";
+    showLineIdle();
+    $("remain").textContent=`最寄りの区間まで約${(loc.d/1000).toFixed(1)}km`;
+  } else if(atIdx>=0){
+    $("lead").textContent="ただいま";
+    $("name").textContent=ST[atIdx][0]; $("kana").textContent=ST[atIdx][1];
+    const nx = ST[atIdx+dir];
+    $("remain").textContent = nx ? `次は ${nx[0]}` : "終点の区間です";
+  } else {
+    const nxt = dir>0 ? b : a, dist = dir>0 ? distB : distA;
+    $("lead").textContent="次は";
+    $("name").textContent=nxt[0]; $("kana").textContent=nxt[1];
+    $("remain").textContent = `あと約${dist>=1000?(dist/1000).toFixed(1)+"km":Math.round(dist/10)*10+"m"}`;
+  }
+
+  // 両端の駅（進行方向が右へ流れるように）
+  const L = dir>0 ? a : b, R = dir>0 ? b : a, tt = dir>0 ? loc.t : 1-loc.t;
+  $("endL").innerHTML = `${L[0]}<small>${dir>0?"前の駅":"前の駅"}</small>`;
+  $("endR").innerHTML = `${R[0]}<small>${atIdx>=0?"":"次の駅"}</small>`;
+  $("train").style.left = (tt*100)+"%";
+
+  // 路線図
+  const items = $("route").children;
+  for(let k=0;k<ST.length;k++){
+    const li = items[k*2];
+    li.className = "";
+    const passed = dir>0 ? k<=loc.i && !(atIdx===k) : k>=loc.i+1 && !(atIdx===k);
+    if(!offRoute && passed) li.classList.add("past");
+    if(!offRoute && atIdx===k) li.classList.add("cur");
+    li.querySelector(".tag").textContent = (!offRoute && atIdx<0 && ST[k]===(dir>0?b:a)) ? "次" : "";
+  }
+  document.querySelectorAll(".route .me").forEach(e=>e.remove());
+  if(!offRoute && atIdx<0){
+    const gap = items[loc.i*2+1], me=document.createElement("span");
+    me.className="me"; gap.appendChild(me);
+    // 隣の駅の行間に配置
+    const h = items[loc.i*2].offsetHeight;
+    me.style.top = (-h/2 + loc.t*h) + "px";
+  }
+}
+
+function buildRoute(){
+  const ol=$("route");
+  ST.forEach((s,k)=>{
+    const li=document.createElement("li");
+    li.innerHTML=`<span>${s[0]}</span><span class="tag"></span>`;
+    ol.appendChild(li);
+    if(k<ST.length-1){const g=document.createElement("li");g.className="gap";g.setAttribute("aria-hidden","true");ol.appendChild(g);}
+  });
+}
+
+function setStatus(live,text,acc){
+  $("status").classList.toggle("live",live);
+  $("statusText").textContent=text;
+  $("acc").textContent=acc||"";
+}
+
+async function keepAwake(){
+  try{ if("wakeLock" in navigator){ wakeLock = await navigator.wakeLock.request("screen"); } }catch(e){}
+}
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible" && (watchId!==null||demoTimer)) keepAwake(); });
+
+function stopAll(){
+  if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;}
+  if(demoTimer){clearInterval(demoTimer);demoTimer=null;}
+  try{wakeLock&&wakeLock.release();}catch(e){}
+  wakeLock=null;
+  $("startBtn").textContent="位置情報を開始"; $("demoBtn").textContent="デモ走行";
+  setStatus(false,"停止中");
+}
+
+$("startBtn").onclick=()=>{
+  if(!LINE) return;
+  if(watchId!==null){stopAll();return;}
+  stopAll();
+  if(!("geolocation" in navigator)){ $("msg").textContent="この画面では位置情報が使えません。Safariで直接開いてください。"; return; }
+  setStatus(false,"位置を取得中…");
+  keepAwake();
+  watchId = navigator.geolocation.watchPosition(p=>{
+    setStatus(true,"現在地を表示中",`精度 ±${Math.round(p.coords.accuracy)}m`);
+    render(locate(p.coords.latitude,p.coords.longitude));
+  },err=>{
+    const m = err.code===1 ? "位置情報が許可されていません。この画面で許可できない場合は、Safariで直接開いてください。" : "位置を取得できませんでした。電波の良い場所で再度お試しください。";
+    $("msg").textContent=m; setStatus(false,"取得できません");
+  },{enableHighAccuracy:true,maximumAge:3000,timeout:20000});
+  $("startBtn").textContent="停止";
+};
+
+$("demoBtn").onclick=()=>{
+  if(!LINE) return;
+  if(demoTimer){stopAll();return;}
+  stopAll(); lastPos=null; autoDir=0;
+  let s=0; const dir = dirMode==="-1"?-1:1, total=(ST.length-1)*1000;
+  setStatus(true,"デモ走行中");
+  keepAwake();
+  demoTimer=setInterval(()=>{
+    s+=12; if(s>total) s=0;
+    const f=s/1000, raw = dir>0?f:(ST.length-1)-f;
+    const i=Math.min(ST.length-2,Math.floor(raw)), t=raw-i;
+    const lat=ST[i][2]+(ST[i+1][2]-ST[i][2])*t, lng=ST[i][3]+(ST[i+1][3]-ST[i][3])*t;
+    render(locate(lat,lng));
+  },100);
+  $("demoBtn").textContent="デモ停止";
+};
+
+document.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{
+  dirMode=b.dataset.dir;
+  document.querySelectorAll(".seg button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+});
+
+function initLine(line){
+  LINE = line;
+  ST = line.stations.map(s=>[s.name,s.kana,s.lat,s.lng]);
+  LAT0 = ST[0][2]; LNG0 = ST[0][3];
+  const latMid = (Math.min(...ST.map(s=>s[2]))+Math.max(...ST.map(s=>s[2])))/2;
+  COSLAT = Math.cos(latMid*Math.PI/180);
+  P = ST.map(s=>xy(s[2],s[3]));
+
+  const root = document.documentElement.style, c = line.color||{};
+  if(c.light) root.setProperty("--c-line",c.light);
+  if(c.lightSoft) root.setProperty("--c-line-soft",c.lightSoft);
+  if(c.dark) root.setProperty("--c-line-dark",c.dark);
+  if(c.darkSoft) root.setProperty("--c-line-dark-soft",c.darkSoft);
+
+  document.title = `${line.name} いまここ`;
+  showLineIdle();
+  $("endL").textContent = ST[0][0];
+  $("endR").textContent = ST[ST.length-1][0];
+  $("dirFwd").textContent = `${ST[ST.length-1][0]}方面`;
+  $("dirBack").textContent = `${ST[0][0]}方面`;
+  buildRoute();
+}
+
+(function loadLine(){
+  const id = new URLSearchParams(location.search).get("line") || DEFAULT_LINE;
+  const fail = () => { $("lead").textContent="路線データを読み込めませんでした"; $("name").textContent=id; };
+  if(!/^[a-z0-9-]+$/.test(id)) return fail();
+  const s = document.createElement("script");
+  s.src = `lines/${id}.js`;
+  s.onload = () => window.EKINOW_LINE && window.EKINOW_LINE.id===id ? initLine(window.EKINOW_LINE) : fail();
+  s.onerror = fail;
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>
