@@ -1,11 +1,20 @@
-// 総武快速線（東京 ― 千葉）
+// 総武快速線・横須賀線（横浜 ― 千葉）
 // 路線データの形式は lines/README.md を参照。座標は Wikidata より
 (window.EKINOW_LINES = window.EKINOW_LINES || {})["sobu-rapid"] = {
   id: "sobu-rapid",
   name: "総武線快速",
   color: { light: "#0067C0", lightSoft: "#D3E4F5", dark: "#4A9BE8", darkSoft: "#10233A" },
-  note: "東京〜錦糸町は地下区間のため、位置が取れないことがあります。通過駅は路線図に薄く表示します。",
+  note: "品川〜錦糸町は地下区間のため、位置が取れないことがあります。通過駅は路線図に薄く表示します。",
   stations: [
+    { name: "横浜",     kana: "よこはま", lat: 35.46583, lng: 139.62278 },
+    { name: "東神奈川", kana: "ひがしかながわ", lat: 35.47806, lng: 139.63333, pass: true },
+    { name: "新子安",   kana: "しんこやす", lat: 35.48694, lng: 139.65472, pass: true },
+    { name: "鶴見",     kana: "つるみ", lat: 35.50856, lng: 139.67600, pass: true },
+    { name: "新川崎",   kana: "しんかわさき", lat: 35.55100, lng: 139.67200 },
+    { name: "武蔵小杉", kana: "むさしこすぎ", lat: 35.57472, lng: 139.66333 },
+    { name: "西大井",   kana: "にしおおい", lat: 35.60190, lng: 139.72180 },
+    { name: "品川",     kana: "しながわ", lat: 35.62861, lng: 139.73917 },
+    { name: "新橋",     kana: "しんばし", lat: 35.66630, lng: 139.75868 },
     { name: "東京",     kana: "とうきょう", lat: 35.68083, lng: 139.76694 },
     { name: "新日本橋", kana: "しんにほんばし", lat: 35.68867, lng: 139.77322 },
     { name: "馬喰町",   kana: "ばくろちょう", lat: 35.69336, lng: 139.78239 },
