@@ -233,7 +233,7 @@ const $ = id => document.getElementById(id);
 const SUGGEST_IN_M = 400, SUGGEST_OUT_M = 600, SUGGEST_MAX_ACC_M = 500;
 const SPEED_WINDOW_MS = 15000, SPEED_MIN_SPAN_MS = 4000, MOVING_MPS = 3, MAX_MPS = 160/3.6, DEMO_MPS = 60/3.6;
 const AUTO_KEY = "ekinow.autoSwitch", AUTO_FIXES = 3, AUTO_NOTE_MS = 30000;
-let LINES = {}, GEOMS = {}, LINE, ST, STOP, G, XFER = [], dismissed = new Set();
+let LINES = {}, GEOMS = {}, LINE, ST, STOP, G, LOOP = false, XFER = [], dismissed = new Set();
 let autoSwitch = false, autoCand = null, autoN = 0, autoNoteTimer = null, noAuto = new Set(); // noAuto: 元に戻した路線（提案はするが自動では切り替えない）
 let track = []; // 直近の {t: ミリ秒, s: 線路沿いの位置(m)}。速さの計算用
 const DIR_MIN_SPAN_MS = 8000, DIR_MIN_MOVE_M = 120; // 進行方向はこれだけ進んだら決める（GPSの揺れでは届かない距離）
@@ -278,12 +278,30 @@ function speedAt(s,now){
   while(track.length && now-track[0].t > SPEED_WINDOW_MS) track.shift();
   const span = now-track[0].t;
   if(span<SPEED_MIN_SPAN_MS) return null;
-  const v = (s-track[0].s)/(span/1000);
+  const v = ds(track[0].s,s)/(span/1000);
   return Math.abs(v)<=MAX_MPS ? v : null; // GPS の飛びによる異常な速さは捨てる
 }
 
+// 環状線は先頭と末尾に同じ駅を置く。駅番号と線路沿いの位置は一周で折り返して扱う
+function wrap(k){ const m = ST.length-1; return LOOP ? ((k%m)+m)%m : k; }
+function ds(a,b){ // 位置 a から b への差（環状線は近い向き）
+  if(!LOOP) return b-a;
+  const T = G.cum[ST.length-1]; let d = (b-a)%T;
+  return d>T/2 ? d-T : d<-T/2 ? d+T : d;
+}
+function ahead(from,to,dir){ // 位置 from から dir 向きに to まで進む距離
+  if(!LOOP) return (to-from)*dir;
+  const T = G.cum[ST.length-1];
+  return (((to-from)*dir)%T+T)%T;
+}
+function sameSt(k,idx){ return k===idx || (LOOP && idx>=0 && wrap(k)===wrap(idx)); }
+
 // k から dir 向きに見て最初に止まる駅（通過駅を飛ばす）。なければ -1
 function stopFrom(k,dir){
+  if(LOOP){
+    for(let n=0;n<ST.length;n++,k+=dir) if(STOP[wrap(k)]) return wrap(k);
+    return -1;
+  }
   while(k>=0 && k<ST.length && !STOP[k]) k+=dir;
   return k>=0 && k<ST.length ? k : -1;
 }
@@ -298,7 +316,7 @@ function setName(name,kana){
 }
 
 function showLineIdle(){
-  setName(LINE.name,`${ST[0][1]} ― ${ST[ST.length-1][1]}`);
+  setName(LINE.name, LINE.kana || `${ST[0][1]} ― ${ST[ST.length-1][1]}`);
 }
 
 function render(loc,now=Date.now()){
@@ -307,7 +325,7 @@ function render(loc,now=Date.now()){
   if(offRoute) track = [];
   // 進行方向（自動）は直近15秒の線路沿いの速さで決める。停車中やGPSの揺れでは変えない
   const raw = offRoute ? null : speedAt(along,now);
-  const moved = track.length ? along-track[0].s : 0, span = track.length ? now-track[0].t : 0;
+  const moved = track.length ? ds(track[0].s,along) : 0, span = track.length ? now-track[0].t : 0;
   if(raw!==null && span>=DIR_MIN_SPAN_MS && Math.abs(moved)>=DIR_MIN_MOVE_M) autoDir = Math.sign(moved);
   const dir = dirMode==="auto" ? (autoDir||1) : +dirMode;
   const v = (raw||0)*dir; // 進行方向の速さ
@@ -315,6 +333,7 @@ function render(loc,now=Date.now()){
   const distA = loc.t*loc.len, distB=(1-loc.t)*loc.len;
   let atIdx = -1; // 止まる駅のそばにいればその駅（通過駅は除く）
   if(distA<NEAR_M && STOP[loc.i]) atIdx=loc.i; else if(distB<NEAR_M && STOP[loc.i+1]) atIdx=loc.i+1;
+  atIdx = atIdx>=0 ? wrap(atIdx) : -1;
 
   // 前後の止まる駅
   const pi = stopFrom(dir>0 ? loc.i : loc.i+1, -dir), ni = stopFrom(dir>0 ? loc.i+1 : loc.i, dir);
@@ -327,18 +346,18 @@ function render(loc,now=Date.now()){
     $("lead").textContent="ただいま";
     setName(ST[atIdx][0],ST[atIdx][1]);
     const nx = stopFrom(atIdx+dir,dir);
-    $("remain").innerHTML = nx>=0 ? `次は ${ST[nx][0]}・${fmtAhead(Math.abs(G.cum[nx]-along),v)}` : "終点の区間です";
+    $("remain").innerHTML = nx>=0 ? `次は ${ST[nx][0]}・${fmtAhead(Math.abs(ahead(along,G.cum[nx],dir)),v)}` : "終点の区間です";
     $("xfer").innerHTML = XFER[atIdx].length ? `のりかえ ${xferChips(XFER[atIdx])}` : "";
   } else {
     $("lead").textContent="次は";
     setName(ST[ni][0],ST[ni][1]);
-    $("remain").innerHTML = `あと${fmtAhead(Math.abs(G.cum[ni]-along),v)}`;
+    $("remain").innerHTML = `あと${fmtAhead(Math.max(0,ahead(along,G.cum[ni],dir)),v)}`;
     $("xfer").innerHTML = XFER[ni].length ? `のりかえ ${xferChips(XFER[ni])}` : "";
   }
 
   // 両端の駅（左が前の駅、右が次の駅。丸印は常に左から右へ進む）
-  const segLen = Math.abs(G.cum[ni]-G.cum[pi]), key = `${pi}-${ni}`;
-  let tt = (along-G.cum[pi])/(G.cum[ni]-G.cum[pi]);
+  const segLen = ahead(G.cum[pi],G.cum[ni],dir), key = `${pi}-${ni}`;
+  let tt = ahead(G.cum[pi],along,dir)/segLen;
   if(band.key===key && tt<band.t && (band.t-tt)*segLen<BAND_BACK_M) tt = band.t;
   band = {key, t:tt};
   $("endL").innerHTML = `${ST[pi][0]}<small>前の駅</small>`;
@@ -351,10 +370,10 @@ function render(loc,now=Date.now()){
   for(let k=0;k<ST.length;k++){
     const li = items[k*2];
     li.className = STOP[k] ? "" : "pass";
-    const passed = dir>0 ? k<=loc.i && !(atIdx===k) : k>=loc.i+1 && !(atIdx===k);
+    const passed = !LOOP && (dir>0 ? k<=loc.i && !(atIdx===k) : k>=loc.i+1 && !(atIdx===k)); // 環状線は「通過済み」を付けない
     if(!offRoute && passed) li.classList.add("past");
-    if(!offRoute && atIdx===k) li.classList.add("cur");
-    li.querySelector(".tag").textContent = (!offRoute && atIdx<0 && k===ni) ? "次" : "";
+    if(!offRoute && sameSt(k,atIdx)) li.classList.add("cur");
+    li.querySelector(".tag").textContent = (!offRoute && atIdx<0 && sameSt(k,ni)) ? "次" : "";
   }
   document.querySelectorAll(".route .me").forEach(e=>e.remove());
   if(!offRoute && atIdx<0){
@@ -595,6 +614,7 @@ function initLine(line){
   LINE = line; autoDir = 0; band = {key:null,t:0}; prevAt = null;
   ST = line.stations.map(s=>[s.name,s.kana,s.lat,s.lng]);
   STOP = line.stations.map(s=>!s.pass);
+  LOOP = !!line.loop;
   G = GEOMS[line.id] || geom(line);
   dismissed.clear(); $("suggest").hidden = true; $("autoNote").hidden = true; track = [];
   // 同じ駅名がある他の路線 = 乗り換えできる路線
@@ -610,8 +630,9 @@ function initLine(line){
   showLineIdle();
   $("endL").textContent = ST[0][0];
   $("endR").textContent = ST[ST.length-1][0];
-  $("dirFwd").textContent = `${ST[ST.length-1][0]}方面`;
-  $("dirBack").textContent = `${ST[0][0]}方面`;
+  const dl = line.dirLabels || [`${ST[ST.length-1][0]}方面`, `${ST[0][0]}方面`];
+  $("dirFwd").textContent = dl[0];
+  $("dirBack").textContent = dl[1];
   $("msg").textContent = line.note ? `${line.note}${BASE_MSG}` : BASE_MSG;
   $("route").replaceChildren();
   buildRoute();
