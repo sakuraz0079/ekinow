@@ -86,6 +86,11 @@ main{max-width:520px;margin:0 auto;padding:14px 14px 32px}
 .ends .r{text-align:right}
 .ends small{display:block;font-size:12px;font-weight:400;color:var(--muted)}
 .remain{text-align:center;font-size:14px;color:var(--muted);padding:0 16px 16px;min-height:20px}
+.remain b{font-size:20px;color:var(--ink);margin:0 2px}
+.xfer{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px;font-size:12px;color:var(--muted);padding:0 16px 14px;margin-top:-8px}
+.xfer:empty{display:none}
+.xf{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.xf i{width:8px;height:8px;border-radius:50%;background:var(--c)}
 
 /* 方面 */
 .seg{display:flex;margin:14px 0 4px;background:var(--board);border-radius:8px;padding:3px}
@@ -112,6 +117,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .route li.gap{height:0;padding:0;overflow:visible}
 .route li.gap::after{display:none}
 .route li .me{position:absolute;left:24px;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#fff;border:4px solid var(--ink);top:50%;z-index:1}
+.route li .xfs{display:flex;flex-wrap:wrap;gap:2px 8px;font-size:11px;color:var(--muted)}
 .route li .tag{margin-left:auto;font-size:12px;font-weight:700}
 .route li .tag:not(:empty){background:var(--line);color:var(--on-line);border-radius:999px;padding:1px 8px}
 @media (prefers-reduced-motion:reduce){.train{transition:none}}
@@ -133,6 +139,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
     <div class="band"><div class="track"><div class="train" id="train"></div></div></div>
     <div class="ends"><span id="endL"></span><span class="r" id="endR"></span></div>
     <div class="remain" id="remain"></div>
+    <div class="xfer" id="xfer"></div>
   </section>
 
   <div class="seg" role="group" aria-label="進行方向">
@@ -158,7 +165,9 @@ const BASE_MSG = "画面を点けたままにすると更新が続きます。�
 const NEAR_M = 180, OFF_M = 1500;
 const $ = id => document.getElementById(id);
 const SUGGEST_IN_M = 400, SUGGEST_OUT_M = 600, SUGGEST_MAX_ACC_M = 500;
-let LINES = {}, GEOMS = {}, LINE, ST, G, dismissed = new Set();
+const SPEED_WINDOW_MS = 15000, SPEED_MIN_SPAN_MS = 4000, MOVING_MPS = 3, MAX_MPS = 160/3.6, DEMO_MPS = 60/3.6;
+let LINES = {}, GEOMS = {}, LINE, ST, G, XFER = [], dismissed = new Set();
+let track = []; // 直近の {t: ミリ秒, s: 線路沿いの位置(m)}。速さの計算用
 let dirMode = "auto", autoDir = 0, lastPos = null, lastFix = null, watchId = null, demoTimer = null, wakeLock = null;
 
 function geom(line){ // 路線の形（始発駅基準のメートル座標の折れ線）
@@ -166,6 +175,8 @@ function geom(line){ // 路線の形（始発駅基準のメートル座標の�
   const latMid = (Math.min(...s.map(x=>x.lat))+Math.max(...s.map(x=>x.lat)))/2;
   const g = {lat0, lng0, cos: Math.cos(latMid*Math.PI/180)};
   g.P = s.map(x=>xy(x.lat,x.lng,g));
+  g.cum = [0]; // 始発駅からの距離（駅間は直線で近似）
+  for(let i=1;i<g.P.length;i++) g.cum.push(g.cum[i-1]+Math.hypot(g.P[i][0]-g.P[i-1][0],g.P[i][1]-g.P[i-1][1]));
   return g;
 }
 
@@ -185,6 +196,25 @@ function locate(lat,lng,g=G){
   return best;
 }
 
+function fmtDist(m){ return m>=1000 ? (m/1000).toFixed(1)+"km" : Math.round(m/10)*10+"m"; }
+function fmtTime(sec){ return sec<60 ? "1分以内" : `約${Math.round(sec/60)}分`; }
+// 「約1.2km・約2分」。進行方向に走っていなければ距離だけ
+function fmtAhead(m,v){ return `約<b>${fmtDist(m)}</b>` + (v>=MOVING_MPS ? `・<b>${fmtTime(m/v)}</b>` : ""); }
+
+// 線路沿いの位置の変化から速さ(m/秒、始発駅→終点向きが正)を求める
+function speedAt(s,now){
+  track.push({t:now,s});
+  while(track.length && now-track[0].t > SPEED_WINDOW_MS) track.shift();
+  const span = now-track[0].t;
+  if(span<SPEED_MIN_SPAN_MS) return null;
+  const v = (s-track[0].s)/(span/1000);
+  return Math.abs(v)<=MAX_MPS ? v : null; // GPS の飛びによる異常な速さは捨てる
+}
+
+function xferChips(lines){
+  return lines.map(l=>`<span class="xf" style="--c:${l.color.light}"><i></i>${l.name}</span>`).join("");
+}
+
 function setName(name,kana){
   $("name").textContent=name; $("name").style.setProperty("--n",Math.max(4,[...name].length));
   $("kana").textContent=kana;
@@ -194,7 +224,7 @@ function showLineIdle(){
   setName(LINE.name,`${ST[0][1]} ― ${ST[ST.length-1][1]}`);
 }
 
-function render(loc){
+function render(loc,now=Date.now()){
   const pos = loc.i + loc.t;
   if(lastPos!==null && Math.abs(pos-lastPos)>0.02) autoDir = pos>lastPos?1:-1;
   lastPos = pos;
@@ -206,20 +236,26 @@ function render(loc){
   if(distA<NEAR_M) atIdx=loc.i; else if(distB<NEAR_M) atIdx=loc.i+1;
 
   const offRoute = loc.d > OFF_M;
+  const along = G.cum[loc.i] + loc.t*loc.len;
+  if(offRoute) track = [];
+  const v = offRoute ? null : (speedAt(along,now)||0)*dir; // 進行方向の速さ
   if(offRoute){
     $("lead").textContent="路線から離れています";
     showLineIdle();
     $("remain").textContent=`最寄りの区間まで約${(loc.d/1000).toFixed(1)}km`;
+    $("xfer").replaceChildren();
   } else if(atIdx>=0){
     $("lead").textContent="ただいま";
     setName(ST[atIdx][0],ST[atIdx][1]);
     const nx = ST[atIdx+dir];
-    $("remain").textContent = nx ? `次は ${nx[0]}` : "終点の区間です";
+    $("remain").innerHTML = nx ? `次は ${nx[0]}・${fmtAhead(Math.abs(G.cum[atIdx+dir]-along),v)}` : "終点の区間です";
+    $("xfer").innerHTML = XFER[atIdx].length ? `のりかえ ${xferChips(XFER[atIdx])}` : "";
   } else {
-    const nxt = dir>0 ? b : a, dist = dir>0 ? distB : distA;
+    const ni = dir>0 ? loc.i+1 : loc.i, nxt = ST[ni], dist = dir>0 ? distB : distA;
     $("lead").textContent="次は";
     setName(nxt[0],nxt[1]);
-    $("remain").textContent = `あと約${dist>=1000?(dist/1000).toFixed(1)+"km":Math.round(dist/10)*10+"m"}`;
+    $("remain").innerHTML = `あと${fmtAhead(dist,v)}`;
+    $("xfer").innerHTML = XFER[ni].length ? `のりかえ ${xferChips(XFER[ni])}` : "";
   }
 
   // 両端の駅（進行方向が右へ流れるように）
@@ -252,7 +288,7 @@ function buildRoute(){
   const ol=$("route");
   ST.forEach((s,k)=>{
     const li=document.createElement("li");
-    li.innerHTML=`<span>${s[0]}</span><span class="tag"></span>`;
+    li.innerHTML=`<span>${s[0]}</span><span class="xfs">${xferChips(XFER[k])}</span><span class="tag"></span>`;
     ol.appendChild(li);
     if(k<ST.length-1){const g=document.createElement("li");g.className="gap";g.setAttribute("aria-hidden","true");ol.appendChild(g);}
   });
@@ -312,12 +348,12 @@ $("startBtn").onclick=()=>{
   if(watchId!==null){stopAll();return;}
   stopAll();
   if(!("geolocation" in navigator)){ $("msg").textContent="この画面では位置情報が使えません。Safariで直接開いてください。"; return; }
-  setStatus(false,"位置を取得中…");
+  setStatus(false,"位置を取得中…"); track = [];
   keepAwake();
   watchId = navigator.geolocation.watchPosition(p=>{
     setStatus(true,"現在地を表示中",`精度 ±${Math.round(p.coords.accuracy)}m`);
     lastFix = [p.coords.latitude,p.coords.longitude];
-    render(locate(...lastFix));
+    render(locate(...lastFix),p.timestamp);
     suggestLines(lastFix[0],lastFix[1],p.coords.accuracy);
   },err=>{
     const m = err.code===1 ? "位置情報が許可されていません。この画面で許可できない場合は、Safariで直接開いてください。" : "位置を取得できませんでした。電波の良い場所で再度お試しください。";
@@ -329,16 +365,17 @@ $("startBtn").onclick=()=>{
 $("demoBtn").onclick=()=>{
   if(!LINE) return;
   if(demoTimer){stopAll();return;}
-  stopAll(); lastPos=null; autoDir=0;
-  let s=0; const dir = dirMode==="-1"?-1:1, total=(ST.length-1)*1000;
+  stopAll(); lastPos=null; autoDir=0; track=[];
+  let s=0, vt=0; const dir = dirMode==="-1"?-1:1, total=(ST.length-1)*1000;
   setStatus(true,"デモ走行中");
   keepAwake();
   demoTimer=setInterval(()=>{
-    s+=12; if(s>total) s=0;
+    s+=12; if(s>total){ s=0; track=[]; }
     const f=s/1000, raw = dir>0?f:(ST.length-1)-f;
     const i=Math.min(ST.length-2,Math.floor(raw)), t=raw-i;
     const lat=ST[i][2]+(ST[i+1][2]-ST[i][2])*t, lng=ST[i][3]+(ST[i+1][3]-ST[i][3])*t;
-    render(locate(lat,lng));
+    vt += 0.012*(G.cum[i+1]-G.cum[i])/DEMO_MPS*1000; // 時速60kmで走った場合の経過時間
+    render(locate(lat,lng),vt);
   },100);
   $("demoBtn").textContent="デモ停止";
 };
@@ -353,7 +390,10 @@ function initLine(line){
   LINE = line; lastPos = null; autoDir = 0;
   ST = line.stations.map(s=>[s.name,s.kana,s.lat,s.lng]);
   G = GEOMS[line.id] || geom(line);
-  dismissed.clear(); $("suggest").hidden = true;
+  dismissed.clear(); $("suggest").hidden = true; track = [];
+  // 同じ駅名がある他の路線 = 乗り換えできる路線
+  XFER = ST.map(s=>Object.values(LINES).filter(l=>l.id!==line.id && l.stations.some(x=>x.name===s[0])));
+  $("xfer").replaceChildren();
 
   const root = document.documentElement.style, c = line.color||{};
   const vars = {"--c-line":c.light, "--c-line-soft":c.lightSoft, "--c-line-dark":c.dark, "--c-line-dark-soft":c.darkSoft, "--c-on-line":c.onLine};
