@@ -63,6 +63,14 @@ main{max-width:520px;margin:0 auto;padding:14px 14px 32px}
 .pick::after{content:"";position:absolute;right:16px;top:50%;width:8px;height:8px;margin-top:-6px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);pointer-events:none}
 .pick select:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 
+/* 近くの路線の提案 */
+.suggest{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--board);border-radius:10px;padding:10px 10px 10px 14px;margin:0 0 10px;font-size:13px;color:var(--muted)}
+.suggest[hidden]{display:none}
+.suggest .t{flex:1 0 100%;display:flex;justify-content:space-between;align-items:center}
+.suggest .x{border:0;background:none;color:var(--muted);font-size:18px;line-height:1;padding:2px 6px;cursor:pointer}
+.suggest .go{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:15px;font-weight:700;color:var(--ink);background:transparent;border:2px solid var(--rule);border-radius:999px;padding:6px 12px;cursor:pointer}
+.suggest .go i{width:10px;height:10px;border-radius:50%;background:var(--c)}
+
 /* 駅名標 */
 .sign{background:var(--board);border-radius:10px;overflow:hidden;box-shadow:0 1px 0 var(--rule)}
 .sign-top{padding:18px 18px 12px;text-align:center}
@@ -114,6 +122,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
   <div class="status" id="status"><span><span class="dot"></span><span id="statusText">位置情報オフ</span></span><span id="acc"></span></div>
 
   <div class="pick"><select id="lineSel" aria-label="路線"></select></div>
+  <div class="suggest" id="suggest" role="status" aria-live="polite" hidden></div>
 
   <section class="sign" aria-live="polite">
     <div class="sign-top">
@@ -148,15 +157,24 @@ const STORE_KEY = "ekinow.line";
 const BASE_MSG = "画面を点けたままにすると更新が続きます。地下や高架下では位置がずれることがあります。";
 const NEAR_M = 180, OFF_M = 1500;
 const $ = id => document.getElementById(id);
-let LINE, ST, P, LAT0, LNG0, COSLAT;
+const SUGGEST_IN_M = 400, SUGGEST_OUT_M = 600, SUGGEST_MAX_ACC_M = 500;
+let LINES = {}, GEOMS = {}, LINE, ST, G, dismissed = new Set();
 let dirMode = "auto", autoDir = 0, lastPos = null, lastFix = null, watchId = null, demoTimer = null, wakeLock = null;
 
-function xy(lat,lng){ // 始発駅基準のメートル座標
-  return [(lng-LNG0)*111320*COSLAT, (lat-LAT0)*110540];
+function geom(line){ // 路線の形（始発駅基準のメートル座標の折れ線）
+  const s = line.stations, lat0 = s[0].lat, lng0 = s[0].lng;
+  const latMid = (Math.min(...s.map(x=>x.lat))+Math.max(...s.map(x=>x.lat)))/2;
+  const g = {lat0, lng0, cos: Math.cos(latMid*Math.PI/180)};
+  g.P = s.map(x=>xy(x.lat,x.lng,g));
+  return g;
 }
 
-function locate(lat,lng){
-  const [x,y] = xy(lat,lng);
+function xy(lat,lng,g=G){ // 始発駅基準のメートル座標
+  return [(lng-g.lng0)*111320*g.cos, (lat-g.lat0)*110540];
+}
+
+function locate(lat,lng,g=G){
+  const [x,y] = xy(lat,lng,g), P = g.P;
   let best = null;
   for(let i=0;i<P.length-1;i++){
     const [ax,ay]=P[i],[bx,by]=P[i+1],dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy;
@@ -240,6 +258,35 @@ function buildRoute(){
   });
 }
 
+// 今の路線から離れていて、別の路線の上にいそうなら切り替えを提案
+function suggestLines(lat,lng,acc){
+  const box = $("suggest"), curD = locate(lat,lng).d;
+  if(acc > SUGGEST_MAX_ACC_M) return;
+  if(curD < SUGGEST_IN_M){ box.hidden = true; return; }
+  const near = Object.keys(LINES)
+    .filter(id => id!==LINE.id && !dismissed.has(id))
+    .map(id => ({id, d: locate(lat,lng,GEOMS[id]).d}))
+    .filter(c => c.d < SUGGEST_IN_M)
+    .sort((a,b) => a.d-b.d);
+  if(!near.length || (box.hidden && curD < SUGGEST_OUT_M)){ if(!near.length) box.hidden = true; return; }
+  const key = near.map(c=>c.id).join();
+  box.hidden = false;
+  if(box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.replaceChildren();
+  const t = document.createElement("div"); t.className = "t";
+  t.innerHTML = `<span>この近くを走っている路線</span><button class="x" aria-label="閉じる">×</button>`;
+  t.querySelector(".x").onclick = () => { near.forEach(c=>dismissed.add(c.id)); box.hidden = true; box.dataset.key = ""; };
+  box.appendChild(t);
+  near.forEach(c=>{
+    const b = document.createElement("button"), line = LINES[c.id];
+    b.className = "go"; b.style.setProperty("--c", line.color.light);
+    b.innerHTML = `<i></i>${line.name}に切り替え`;
+    b.onclick = () => selectLine(c.id);
+    box.appendChild(b);
+  });
+}
+
 function setStatus(live,text,acc){
   $("status").classList.toggle("live",live);
   $("statusText").textContent=text;
@@ -271,6 +318,7 @@ $("startBtn").onclick=()=>{
     setStatus(true,"現在地を表示中",`精度 ±${Math.round(p.coords.accuracy)}m`);
     lastFix = [p.coords.latitude,p.coords.longitude];
     render(locate(...lastFix));
+    suggestLines(lastFix[0],lastFix[1],p.coords.accuracy);
   },err=>{
     const m = err.code===1 ? "位置情報が許可されていません。この画面で許可できない場合は、Safariで直接開いてください。" : "位置を取得できませんでした。電波の良い場所で再度お試しください。";
     $("msg").textContent=m; setStatus(false,"取得できません");
@@ -304,10 +352,8 @@ function initLine(line){
   if(demoTimer) stopAll();
   LINE = line; lastPos = null; autoDir = 0;
   ST = line.stations.map(s=>[s.name,s.kana,s.lat,s.lng]);
-  LAT0 = ST[0][2]; LNG0 = ST[0][3];
-  const latMid = (Math.min(...ST.map(s=>s[2]))+Math.max(...ST.map(s=>s[2])))/2;
-  COSLAT = Math.cos(latMid*Math.PI/180);
-  P = ST.map(s=>xy(s[2],s[3]));
+  G = GEOMS[line.id] || geom(line);
+  dismissed.clear(); $("suggest").hidden = true;
 
   const root = document.documentElement.style, c = line.color||{};
   const vars = {"--c-line":c.light, "--c-line-soft":c.lightSoft, "--c-line-dark":c.dark, "--c-line-dark-soft":c.darkSoft, "--c-on-line":c.onLine};
@@ -338,22 +384,25 @@ function loadScript(src){
 (async function loadLines(){
   const ids = (window.EKINOW_LINE_IDS||[]).filter(id=>/^[a-z0-9-]+$/.test(id));
   await Promise.allSettled(ids.map(id=>loadScript(`lines/${id}.js`)));
-  const lines = window.EKINOW_LINES||{}, ok = ids.filter(id=>lines[id]);
+  const all = window.EKINOW_LINES||{}, ok = ids.filter(id=>all[id]);
   if(!ok.length){ $("lead").textContent="路線データを読み込めませんでした"; return; }
+  ok.forEach(id=>{ LINES[id] = all[id]; GEOMS[id] = geom(all[id]); });
 
   const sel = $("lineSel");
-  ok.forEach(id=>sel.add(new Option(lines[id].name,id)));
-  sel.onchange = ()=>{
-    initLine(lines[sel.value]);
-    try{ localStorage.setItem(STORE_KEY,sel.value); }catch(e){}
-    history.replaceState(null,"",`?line=${sel.value}`);
-  };
+  ok.forEach(id=>sel.add(new Option(LINES[id].name,id)));
+  sel.onchange = ()=>selectLine(sel.value);
 
   let saved = null;
   try{ saved = localStorage.getItem(STORE_KEY); }catch(e){}
   const want = new URLSearchParams(location.search).get("line");
-  initLine(lines[[want,saved].find(id=>id && lines[id]) || ok[0]]);
+  initLine(LINES[[want,saved].find(id=>id && LINES[id]) || ok[0]]);
 })();
+
+function selectLine(id){
+  initLine(LINES[id]);
+  try{ localStorage.setItem(STORE_KEY,id); }catch(e){}
+  history.replaceState(null,"",`?line=${id}`);
+}
 </script>
 </body>
 </html>
