@@ -101,6 +101,8 @@ main{max-width:520px;margin:0 auto;padding:14px 14px 32px}
 .actions button{flex:1;font:inherit;font-size:15px;font-weight:700;padding:13px 8px;border-radius:8px;border:2px solid var(--line);background:var(--line);color:var(--on-line);cursor:pointer}
 .actions button.ghost{background:transparent;color:var(--ink);border-color:var(--rule)}
 button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.opt{display:flex;align-items:center;gap:8px;font-size:14px;margin:0 4px 10px;cursor:pointer}
+.opt input{width:20px;height:20px;accent-color:var(--line);margin:0}
 .msg{font-size:13px;color:var(--muted);margin:0 4px 12px;line-height:1.6}
 
 /* 路線図 */
@@ -117,6 +119,9 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .route li.gap{height:0;padding:0;overflow:visible}
 .route li.gap::after{display:none}
 .route li .me{position:absolute;left:24px;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#fff;border:4px solid var(--ink);top:50%;z-index:1}
+.route li.pass{font-size:13px;color:var(--muted);padding-top:3px;padding-bottom:3px}
+.route li.pass::after{width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-width:0;background:var(--rule)}
+.route li .pv{font-size:11px;border:1px solid var(--rule);border-radius:4px;padding:0 4px}
 .route li .xfs{display:flex;flex-wrap:wrap;gap:2px 8px;font-size:11px;color:var(--muted)}
 .route li .tag{margin-left:auto;font-size:12px;font-weight:700}
 .route li .tag:not(:empty){background:var(--line);color:var(--on-line);border-radius:999px;padding:1px 8px}
@@ -129,6 +134,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 
   <div class="pick"><select id="lineSel" aria-label="路線"></select></div>
   <div class="suggest" id="suggest" role="status" aria-live="polite" hidden></div>
+  <div class="suggest" id="autoNote" role="status" aria-live="polite" hidden></div>
 
   <section class="sign" aria-live="polite">
     <div class="sign-top">
@@ -152,6 +158,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
     <button id="startBtn">位置情報を開始</button>
     <button id="demoBtn" class="ghost">デモ走行</button>
   </div>
+  <label class="opt"><input type="checkbox" id="autoSw">近くの路線に自動で切り替える</label>
   <p class="msg" id="msg"></p>
 
   <ol class="route" id="route"></ol>
@@ -166,7 +173,9 @@ const NEAR_M = 180, OFF_M = 1500;
 const $ = id => document.getElementById(id);
 const SUGGEST_IN_M = 400, SUGGEST_OUT_M = 600, SUGGEST_MAX_ACC_M = 500;
 const SPEED_WINDOW_MS = 15000, SPEED_MIN_SPAN_MS = 4000, MOVING_MPS = 3, MAX_MPS = 160/3.6, DEMO_MPS = 60/3.6;
-let LINES = {}, GEOMS = {}, LINE, ST, G, XFER = [], dismissed = new Set();
+const AUTO_KEY = "ekinow.autoSwitch", AUTO_FIXES = 3, AUTO_NOTE_MS = 30000;
+let LINES = {}, GEOMS = {}, LINE, ST, STOP, G, XFER = [], dismissed = new Set();
+let autoSwitch = false, autoCand = null, autoN = 0, autoNoteTimer = null, noAuto = new Set(); // noAuto: 元に戻した路線（提案はするが自動では切り替えない）
 let track = []; // 直近の {t: ミリ秒, s: 線路沿いの位置(m)}。速さの計算用
 let dirMode = "auto", autoDir = 0, lastPos = null, lastFix = null, watchId = null, demoTimer = null, wakeLock = null;
 
@@ -211,6 +220,12 @@ function speedAt(s,now){
   return Math.abs(v)<=MAX_MPS ? v : null; // GPS の飛びによる異常な速さは捨てる
 }
 
+// k から dir 向きに見て最初に止まる駅（通過駅を飛ばす）。なければ -1
+function stopFrom(k,dir){
+  while(k>=0 && k<ST.length && !STOP[k]) k+=dir;
+  return k>=0 && k<ST.length ? k : -1;
+}
+
 function xferChips(lines){
   return lines.map(l=>`<span class="xf" style="--c:${l.color.light}"><i></i>${l.name}</span>`).join("");
 }
@@ -230,15 +245,16 @@ function render(loc,now=Date.now()){
   lastPos = pos;
   const dir = dirMode==="auto" ? (autoDir||1) : +dirMode;
 
-  const a=ST[loc.i], b=ST[loc.i+1];
   const distA = loc.t*loc.len, distB=(1-loc.t)*loc.len;
-  let atIdx = -1;
-  if(distA<NEAR_M) atIdx=loc.i; else if(distB<NEAR_M) atIdx=loc.i+1;
+  let atIdx = -1; // 止まる駅のそばにいればその駅（通過駅は除く）
+  if(distA<NEAR_M && STOP[loc.i]) atIdx=loc.i; else if(distB<NEAR_M && STOP[loc.i+1]) atIdx=loc.i+1;
 
   const offRoute = loc.d > OFF_M;
   const along = G.cum[loc.i] + loc.t*loc.len;
   if(offRoute) track = [];
   const v = offRoute ? null : (speedAt(along,now)||0)*dir; // 進行方向の速さ
+  // 前後の止まる駅
+  const pi = stopFrom(dir>0 ? loc.i : loc.i+1, -dir), ni = stopFrom(dir>0 ? loc.i+1 : loc.i, dir);
   if(offRoute){
     $("lead").textContent="路線から離れています";
     showLineIdle();
@@ -247,32 +263,31 @@ function render(loc,now=Date.now()){
   } else if(atIdx>=0){
     $("lead").textContent="ただいま";
     setName(ST[atIdx][0],ST[atIdx][1]);
-    const nx = ST[atIdx+dir];
-    $("remain").innerHTML = nx ? `次は ${nx[0]}・${fmtAhead(Math.abs(G.cum[atIdx+dir]-along),v)}` : "終点の区間です";
+    const nx = stopFrom(atIdx+dir,dir);
+    $("remain").innerHTML = nx>=0 ? `次は ${ST[nx][0]}・${fmtAhead(Math.abs(G.cum[nx]-along),v)}` : "終点の区間です";
     $("xfer").innerHTML = XFER[atIdx].length ? `のりかえ ${xferChips(XFER[atIdx])}` : "";
   } else {
-    const ni = dir>0 ? loc.i+1 : loc.i, nxt = ST[ni], dist = dir>0 ? distB : distA;
     $("lead").textContent="次は";
-    setName(nxt[0],nxt[1]);
-    $("remain").innerHTML = `あと${fmtAhead(dist,v)}`;
+    setName(ST[ni][0],ST[ni][1]);
+    $("remain").innerHTML = `あと${fmtAhead(Math.abs(G.cum[ni]-along),v)}`;
     $("xfer").innerHTML = XFER[ni].length ? `のりかえ ${xferChips(XFER[ni])}` : "";
   }
 
   // 両端の駅（進行方向が右へ流れるように）
-  const L = dir>0 ? a : b, R = dir>0 ? b : a, tt = dir>0 ? loc.t : 1-loc.t;
-  $("endL").innerHTML = `${L[0]}<small>${dir>0?"前の駅":"前の駅"}</small>`;
-  $("endR").innerHTML = `${R[0]}<small>${atIdx>=0?"":"次の駅"}</small>`;
+  const tt = (along-G.cum[pi])/(G.cum[ni]-G.cum[pi]);
+  $("endL").innerHTML = `${ST[pi][0]}<small>前の駅</small>`;
+  $("endR").innerHTML = `${ST[ni][0]}<small>${atIdx>=0?"":"次の駅"}</small>`;
   $("train").style.left = (tt*100)+"%";
 
   // 路線図
   const items = $("route").children;
   for(let k=0;k<ST.length;k++){
     const li = items[k*2];
-    li.className = "";
+    li.className = STOP[k] ? "" : "pass";
     const passed = dir>0 ? k<=loc.i && !(atIdx===k) : k>=loc.i+1 && !(atIdx===k);
     if(!offRoute && passed) li.classList.add("past");
     if(!offRoute && atIdx===k) li.classList.add("cur");
-    li.querySelector(".tag").textContent = (!offRoute && atIdx<0 && ST[k]===(dir>0?b:a)) ? "次" : "";
+    li.querySelector(".tag").textContent = (!offRoute && atIdx<0 && k===ni) ? "次" : "";
   }
   document.querySelectorAll(".route .me").forEach(e=>e.remove());
   if(!offRoute && atIdx<0){
@@ -288,7 +303,8 @@ function buildRoute(){
   const ol=$("route");
   ST.forEach((s,k)=>{
     const li=document.createElement("li");
-    li.innerHTML=`<span>${s[0]}</span><span class="xfs">${xferChips(XFER[k])}</span><span class="tag"></span>`;
+    li.innerHTML = STOP[k] ? `<span>${s[0]}</span><span class="xfs">${xferChips(XFER[k])}</span><span class="tag"></span>`
+                           : `<span>${s[0]}</span><span class="pv">通過</span><span class="tag"></span>`;
     ol.appendChild(li);
     if(k<ST.length-1){const g=document.createElement("li");g.className="gap";g.setAttribute("aria-hidden","true");ol.appendChild(g);}
   });
@@ -297,14 +313,19 @@ function buildRoute(){
 // 今の路線から離れていて、別の路線の上にいそうなら切り替えを提案
 function suggestLines(lat,lng,acc){
   const box = $("suggest"), curD = locate(lat,lng).d;
-  if(acc > SUGGEST_MAX_ACC_M) return;
-  if(curD < SUGGEST_IN_M){ box.hidden = true; return; }
+  if(acc > SUGGEST_MAX_ACC_M){ autoN = 0; return; }
+  if(curD < SUGGEST_IN_M){ box.hidden = true; autoN = 0; return; }
   const near = Object.keys(LINES)
     .filter(id => id!==LINE.id && !dismissed.has(id))
     .map(id => ({id, d: locate(lat,lng,GEOMS[id]).d}))
     .filter(c => c.d < SUGGEST_IN_M)
     .sort((a,b) => a.d-b.d);
-  if(!near.length || (box.hidden && curD < SUGGEST_OUT_M)){ if(!near.length) box.hidden = true; return; }
+  if(!near.length || (box.hidden && curD < SUGGEST_OUT_M)){ if(!near.length) box.hidden = true; autoN = 0; return; }
+  // 自動切り替え: 候補が1つだけの状態が続いたら切り替える
+  if(autoSwitch && near.length===1 && !noAuto.has(near[0].id)){
+    autoN = autoCand===near[0].id ? autoN+1 : 1; autoCand = near[0].id;
+    if(autoN >= AUTO_FIXES){ autoSwitchTo(near[0].id); return; }
+  } else autoN = 0;
   const key = near.map(c=>c.id).join();
   box.hidden = false;
   if(box.dataset.key === key) return;
@@ -321,6 +342,22 @@ function suggestLines(lat,lng,acc){
     b.onclick = () => selectLine(c.id);
     box.appendChild(b);
   });
+}
+
+function autoSwitchTo(id){
+  const from = LINE.id;
+  selectLine(id); // 位置情報の使用中なので、切り替え先での現在地もここで表示される
+  const note = $("autoNote");
+  note.replaceChildren();
+  const t = document.createElement("div"); t.className = "t";
+  t.innerHTML = `<span>${LINES[id].name}に自動で切り替えました</span><button class="x" aria-label="閉じる">×</button>`;
+  t.querySelector(".x").onclick = () => { note.hidden = true; };
+  const b = document.createElement("button");
+  b.className = "go"; b.style.setProperty("--c", LINES[from].color.light);
+  b.innerHTML = `<i></i>${LINES[from].name}に戻す`;
+  b.onclick = () => { selectLine(from); noAuto.add(id); }; // 戻した路線へは再び自動で切り替えない
+  note.append(t,b); note.hidden = false;
+  clearTimeout(autoNoteTimer); autoNoteTimer = setTimeout(()=>{ note.hidden = true; }, AUTO_NOTE_MS);
 }
 
 function setStatus(live,text,acc){
@@ -389,10 +426,12 @@ function initLine(line){
   if(demoTimer) stopAll();
   LINE = line; lastPos = null; autoDir = 0;
   ST = line.stations.map(s=>[s.name,s.kana,s.lat,s.lng]);
+  STOP = line.stations.map(s=>!s.pass);
   G = GEOMS[line.id] || geom(line);
-  dismissed.clear(); $("suggest").hidden = true; track = [];
+  dismissed.clear(); $("suggest").hidden = true; $("autoNote").hidden = true; track = [];
   // 同じ駅名がある他の路線 = 乗り換えできる路線
-  XFER = ST.map(s=>Object.values(LINES).filter(l=>l.id!==line.id && l.stations.some(x=>x.name===s[0])));
+  XFER = ST.map((s,k)=>!STOP[k] ? [] : Object.values(LINES).filter(l=>l.id!==line.id && l.stations.some(x=>x.name===s[0] && !x.pass)));
+  autoCand = null; autoN = 0; noAuto.clear();
   $("xfer").replaceChildren();
 
   const root = document.documentElement.style, c = line.color||{};
@@ -431,6 +470,13 @@ function loadScript(src){
   const sel = $("lineSel");
   ok.forEach(id=>sel.add(new Option(LINES[id].name,id)));
   sel.onchange = ()=>selectLine(sel.value);
+
+  try{ autoSwitch = localStorage.getItem(AUTO_KEY)==="1"; }catch(e){}
+  $("autoSw").checked = autoSwitch;
+  $("autoSw").onchange = e => {
+    autoSwitch = e.target.checked; autoN = 0;
+    try{ localStorage.setItem(AUTO_KEY, autoSwitch ? "1" : "0"); }catch(e){}
+  };
 
   let saved = null;
   try{ saved = localStorage.getItem(STORE_KEY); }catch(e){}
