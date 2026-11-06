@@ -9,5 +9,5 @@
 - `icons/` … アイコン（`icon.svg` が元絵、PNG はそこから書き出し）
 - `manifest.webmanifest` … ホーム画面に追加したときの名前・アイコン
 
-`index.html?line=<id>` で路線を切り替え（省略時は武蔵野線 `musashino`）。
-路線を追加するときは `lines/` にファイルを1つ足すだけです。
+画面上部のメニューで路線を切り替え（前回の選択を記憶）。`index.html?line=<id>` で直接指定も可。
+収録路線: 武蔵野線・京浜東北線・東西線・総武線・総武線快速。追加方法は [lines/README.md](lines/README.md)。
