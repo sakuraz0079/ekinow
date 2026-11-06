@@ -177,7 +177,10 @@ const AUTO_KEY = "ekinow.autoSwitch", AUTO_FIXES = 3, AUTO_NOTE_MS = 30000;
 let LINES = {}, GEOMS = {}, LINE, ST, STOP, G, XFER = [], dismissed = new Set();
 let autoSwitch = false, autoCand = null, autoN = 0, autoNoteTimer = null, noAuto = new Set(); // noAuto: 元に戻した路線（提案はするが自動では切り替えない）
 let track = []; // 直近の {t: ミリ秒, s: 線路沿いの位置(m)}。速さの計算用
-let dirMode = "auto", autoDir = 0, lastPos = null, lastFix = null, watchId = null, demoTimer = null, wakeLock = null;
+const DIR_MIN_SPAN_MS = 8000, DIR_MIN_MOVE_M = 120; // 進行方向はこれだけ進んだら決める（GPSの揺れでは届かない距離）
+const BAND_BACK_M = 150; // 帯の丸印はこれ未満の後戻り（GPSの揺れ）では左へ戻さない
+let band = {key:null, t:0};
+let dirMode = "auto", autoDir = 0, lastFix = null, watchId = null, demoTimer = null, wakeLock = null;
 
 function geom(line){ // 路線の形（始発駅基準のメートル座標の折れ線）
   const s = line.stations, lat0 = s[0].lat, lng0 = s[0].lng;
@@ -240,19 +243,20 @@ function showLineIdle(){
 }
 
 function render(loc,now=Date.now()){
-  const pos = loc.i + loc.t;
-  if(lastPos!==null && Math.abs(pos-lastPos)>0.02) autoDir = pos>lastPos?1:-1;
-  lastPos = pos;
+  const offRoute = loc.d > OFF_M;
+  const along = G.cum[loc.i] + loc.t*loc.len;
+  if(offRoute) track = [];
+  // 進行方向（自動）は直近15秒の線路沿いの速さで決める。停車中やGPSの揺れでは変えない
+  const raw = offRoute ? null : speedAt(along,now);
+  const moved = track.length ? along-track[0].s : 0, span = track.length ? now-track[0].t : 0;
+  if(raw!==null && span>=DIR_MIN_SPAN_MS && Math.abs(moved)>=DIR_MIN_MOVE_M) autoDir = Math.sign(moved);
   const dir = dirMode==="auto" ? (autoDir||1) : +dirMode;
+  const v = (raw||0)*dir; // 進行方向の速さ
 
   const distA = loc.t*loc.len, distB=(1-loc.t)*loc.len;
   let atIdx = -1; // 止まる駅のそばにいればその駅（通過駅は除く）
   if(distA<NEAR_M && STOP[loc.i]) atIdx=loc.i; else if(distB<NEAR_M && STOP[loc.i+1]) atIdx=loc.i+1;
 
-  const offRoute = loc.d > OFF_M;
-  const along = G.cum[loc.i] + loc.t*loc.len;
-  if(offRoute) track = [];
-  const v = offRoute ? null : (speedAt(along,now)||0)*dir; // 進行方向の速さ
   // 前後の止まる駅
   const pi = stopFrom(dir>0 ? loc.i : loc.i+1, -dir), ni = stopFrom(dir>0 ? loc.i+1 : loc.i, dir);
   if(offRoute){
@@ -273,11 +277,14 @@ function render(loc,now=Date.now()){
     $("xfer").innerHTML = XFER[ni].length ? `のりかえ ${xferChips(XFER[ni])}` : "";
   }
 
-  // 両端の駅（進行方向が右へ流れるように）
-  const tt = (along-G.cum[pi])/(G.cum[ni]-G.cum[pi]);
+  // 両端の駅（左が前の駅、右が次の駅。丸印は常に左から右へ進む）
+  const segLen = Math.abs(G.cum[ni]-G.cum[pi]), key = `${pi}-${ni}`;
+  let tt = (along-G.cum[pi])/(G.cum[ni]-G.cum[pi]);
+  if(band.key===key && tt<band.t && (band.t-tt)*segLen<BAND_BACK_M) tt = band.t;
+  band = {key, t:tt};
   $("endL").innerHTML = `${ST[pi][0]}<small>前の駅</small>`;
   $("endR").innerHTML = `${ST[ni][0]}<small>${atIdx>=0?"":"次の駅"}</small>`;
-  $("train").style.left = (tt*100)+"%";
+  $("train").style.left = (Math.max(0,Math.min(1,tt))*100)+"%";
 
   // 路線図
   const items = $("route").children;
@@ -386,7 +393,7 @@ $("startBtn").onclick=()=>{
   if(watchId!==null){stopAll();return;}
   stopAll();
   if(!("geolocation" in navigator)){ $("msg").textContent="この画面では位置情報が使えません。Safariで直接開いてください。"; return; }
-  setStatus(false,"位置を取得中…"); track = [];
+  setStatus(false,"位置を取得中…"); track = []; band = {key:null,t:0};
   keepAwake();
   watchId = navigator.geolocation.watchPosition(p=>{
     setStatus(true,"現在地を表示中",`精度 ±${Math.round(p.coords.accuracy)}m`);
@@ -403,7 +410,7 @@ $("startBtn").onclick=()=>{
 $("demoBtn").onclick=()=>{
   if(!LINE) return;
   if(demoTimer){stopAll();return;}
-  stopAll(); lastPos=null; autoDir=0; track=[];
+  stopAll(); autoDir=0; track=[]; band={key:null,t:0};
   let s=0, vt=0; const dir = dirMode==="-1"?-1:1, total=(ST.length-1)*1000;
   setStatus(true,"デモ走行中");
   keepAwake();
@@ -425,7 +432,7 @@ document.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{
 
 function initLine(line){
   if(demoTimer) stopAll();
-  LINE = line; lastPos = null; autoDir = 0;
+  LINE = line; autoDir = 0; band = {key:null,t:0};
   ST = line.stations.map(s=>[s.name,s.kana,s.lat,s.lng]);
   STOP = line.stations.map(s=>!s.pass);
   G = GEOMS[line.id] || geom(line);
