@@ -84,7 +84,10 @@ main{max-width:520px;margin:0 auto;padding:14px 14px 32px}
 .scene .stars{top:0;height:60px;display:none}
 .scene[data-tod="night"] .stars{display:block}
 .scene .clouds{top:6px;height:36px}
-.scene .far{bottom:22px;height:48px}
+.scene .far{bottom:22px;height:60px}
+.scene .bridge{bottom:22px;height:46px;display:none}
+.scene[data-theme="river"] .bridge{display:block}
+.scene[data-theme="tunnel"] .clouds,.scene[data-theme="tunnel"] .stars{display:none}
 .scene .near{bottom:22px;height:44px}
 .scene .rail{position:absolute;left:0;right:0;bottom:0;height:22px;background:var(--line)}
 .scene .rail::before{content:"";position:absolute;left:0;right:0;top:3px;height:3px;background:rgba(255,255,255,.75)}
@@ -93,7 +96,7 @@ main{max-width:520px;margin:0 auto;padding:14px 14px 32px}
 .scene .plat.l{left:0}.scene .plat.r{left:100%}
 
 /* キャラ電車 */
-.train{position:absolute;bottom:3px;width:46px;height:46px;margin-left:-23px;left:0;transition:left .8s ease}
+.train{position:absolute;bottom:3px;width:46px;height:46px;margin-left:-23px;left:0;transition:left .8s ease;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .train svg{display:block;width:100%;height:100%;overflow:visible}
 .train .bd{transform-box:fill-box;transform-origin:50% 100%}
 .train .wh{transform-box:fill-box;transform-origin:center}
@@ -107,7 +110,7 @@ main{max-width:520px;margin:0 auto;padding:14px 14px 32px}
 .train.hop svg{animation:hop .9s ease-out}
 .train .zzz{position:absolute;left:70%;bottom:85%;font-size:11px;font-weight:900;color:#fff;text-shadow:0 0 3px rgba(0,0,0,.4);opacity:0;pointer-events:none}
 .train.sleep .zzz{animation:zzz 2.6s ease-in-out infinite}
-.train .bubble{position:absolute;bottom:105%;left:50%;transform:translateX(var(--bx,-50%));white-space:nowrap;background:#fff;color:#23272D;font-size:11px;font-weight:900;padding:3px 8px;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.2);opacity:0;transition:opacity .3s;pointer-events:none}
+.train .bubble{position:absolute;bottom:105%;left:0;white-space:nowrap;background:#fff;color:#23272D;font-size:11px;font-weight:900;padding:3px 8px;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.2);opacity:0;transition:opacity .3s;pointer-events:none}
 .train .bubble.show{opacity:1}
 @keyframes bob{to{transform:translateY(-1.5px)}}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -180,6 +183,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
       <div class="layer clouds" id="lyClouds"></div>
       <div class="layer far" id="lyFar"></div>
       <div class="layer near" id="lyNear"></div>
+      <div class="layer bridge" id="lyBridge"></div>
       <div class="rail"></div>
       <div class="track">
         <div class="plat l"></div><div class="plat r"></div>
@@ -363,7 +367,7 @@ function render(loc,now=Date.now()){
   $("endL").innerHTML = `${ST[pi][0]}<small>前の駅</small>`;
   $("endR").innerHTML = `${ST[ni][0]}<small>${atIdx>=0?"":"次の駅"}</small>`;
   $("train").style.left = (Math.max(0,Math.min(1,tt))*100)+"%";
-  animateTrain(v,atIdx,offRoute,tt,now);
+  animateTrain({v,atIdx,offRoute,tt,now,loc,along,ni,dir});
 
   // 路線図
   const items = $("route").children;
@@ -449,17 +453,27 @@ function autoSwitchTo(id){
 
 // ---- 車窓とキャラ電車 ----
 const TOD = { // 時間帯ごとの色
-  morning:{sky:["#FFD6B0","#AEDCF7"], far:"#9FB7CC", win:null,      near:"#6BA368", pole:"#7A8796", cloud:"#FFFFFF"},
-  day:    {sky:["#7EC8F2","#CDEBFA"], far:"#A8BFD3", win:null,      near:"#5E9E5B", pole:"#7A8796", cloud:"#FFFFFF"},
-  evening:{sky:["#F59A62","#FBD3A5"], far:"#8C7A8F", win:"#FFE08A", near:"#4F6F4C", pole:"#5D5566", cloud:"#FFE1C7"},
-  night:  {sky:["#0E1A3A","#2A3A6B"], far:"#2C3550", win:"#FFD966", near:"#1F2D2A", pole:"#3A4256", cloud:"#4A5480"},
+  morning:{sky:["#FFD6B0","#AEDCF7"], far:"#9FB7CC", win:null,      near:"#6BA368", pole:"#7A8796", cloud:"#FFFFFF", hill:"#8FB98B", mtn:"#8EA6C4", water:"#7FC4E8", field:"#B9D27A", roof:"#C97B63", truss:"#8A97A8"},
+  day:    {sky:["#7EC8F2","#CDEBFA"], far:"#A8BFD3", win:null,      near:"#5E9E5B", pole:"#7A8796", cloud:"#FFFFFF", hill:"#7FB77E", mtn:"#93AFCF", water:"#4FA8DE", field:"#A9CC66", roof:"#C2604A", truss:"#8A97A8"},
+  evening:{sky:["#F59A62","#FBD3A5"], far:"#8C7A8F", win:"#FFE08A", near:"#4F6F4C", pole:"#5D5566", cloud:"#FFE1C7", hill:"#6D7F5C", mtn:"#7D6E8C", water:"#E79C6C", field:"#9C9A55", roof:"#8E4E45", truss:"#5D5566"},
+  night:  {sky:["#0E1A3A","#2A3A6B"], far:"#2C3550", win:"#FFD966", near:"#1F2D2A", pole:"#3A4256", cloud:"#4A5480", hill:"#22302A", mtn:"#2A3352", water:"#1B2A50", field:"#26331F", roof:"#3A2F3A", truss:"#4A5568"},
 };
-const TILE = {clouds:320, far:240, near:220}; // 各層の絵の幅(px)
-const SCENE_PX_PER_M = {clouds:0.3, far:1.5, near:6};   // 1m進むごとに流れる量。手前ほど速い
-const STOP_SLEEP_MS = 30000, SAY_GAP_MS = 20000;
+// 主な川の渡河点（路線と交わるあたり。おおよその位置）
+const RIVERS = [["荒川",35.7905,139.7165],["多摩川",35.5405,139.7045],["荒川",35.7105,139.8505],["江戸川",35.7290,139.8950],["隅田川",35.6975,139.7905],
+                ["江戸川",35.8440,139.8890],["荒川",35.6680,139.8400],["旧江戸川",35.6645,139.8800],["多摩川",35.5840,139.6780]];
+// 都会の中心と半径(m)。東京駅から CITY_FAR_M 以上離れると郊外、その間は住宅街
+const CITIES = [[35.681,139.767,9000],[35.466,139.622,4000],[35.906,139.624,3000],[35.613,140.113,3000],[35.531,139.697,2500],[35.702,139.985,2000],[35.858,139.657,2000]];
+const CITY_FAR_M = 22000, RIVER_NEAR_M = 600, RIVER_SHOW_M = 220;
+const TILE = {clouds:320, far:240, near:220, bridge:120}; // 各層の絵の幅(px)
+const SCENE_PX_PER_M = {clouds:0.3, far:1.5, near:6, bridge:6}; // 1m進むごとに流れる量。手前ほど速い
+const STOP_SLEEP_MS = 30000, SIGNAL_WAIT_MS = 15000, SAY_GAP_MS = 20000, SAY_SHOW_MS = 2600, FAST_MPS = 80/3.6;
+const TAP_LINES = ["がたんごとん♪","えへへ","なでなで？","いっしょにがんばろ！","しゅっしゅっぽっぽ♪","つり革につかまってね","今日もいい天気？","よそみ運転じゃないよ！"];
+const GREET = {morning:"おはよう！いってきます", day:"しゅっぱつしんこう！", evening:"おかえりなさい〜", night:"おつかれさま、帰ろうね"};
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-let sceneV = 0, sceneVAt = 0, sceneOff = {clouds:0, far:0, near:0}, lastFrame = 0;
-let prevAt = null, stopSince = null, lastSay = {text:"", t:-Infinity}, bubbleTimer = null;
+let sceneV = 0, sceneVAt = 0, sceneOff = {clouds:0, far:0, near:0, bridge:0}, lastFrame = 0;
+let theme = "city", riverName = "", sceneKey = "", lineRivers = [], lineTunnels = [];
+let prevAt = null, stopSince = null, greeted = false, soonIdx = -1, waitSaid = false, sleepSaid = false, wasSleep = false, wasOff = false, fastSaid = false;
+let sayQueue = [], saying = false, lastSaid = {};
 
 function svgTile(w,h,body){
   return `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>${body}</svg>`)}")`;
@@ -467,55 +481,123 @@ function svgTile(w,h,body){
 
 function timeOfDay(h){ return h>=5&&h<9 ? "morning" : h>=9&&h<16 ? "day" : h>=16&&h<19 ? "evening" : "night"; }
 
+function meters(lat1,lng1,lat2,lng2){
+  return Math.hypot((lng2-lng1)*111320*Math.cos(lat1*Math.PI/180),(lat2-lat1)*110540);
+}
+
+// 窓明かり付きの建物（夕方と夜だけ明かり）
+function buildings(list,c,h0){
+  let out = "";
+  list.forEach(([x,w,h],n)=>{
+    out += `<rect x='${x}' y='${h0-h}' width='${w}' height='${h}' fill='${c.far}'/>`;
+    if(c.win) for(let wy=h0-h+5; wy<h0-4; wy+=7) for(let wx=x+4; wx<x+w-3; wx+=7)
+      if((wx*7+wy*13+n)%5<2) out += `<rect x='${wx}' y='${wy}' width='3' height='3' fill='${c.win}'/>`;
+  });
+  return out;
+}
+
+// 景色の層を時間帯と場所のパターンで描く
 function paintScene(){
-  const k = timeOfDay(new Date().getHours()), c = TOD[k], sc = $("scene");
-  if(sc.dataset.tod===k) return;
-  sc.dataset.tod = k;
-  sc.style.setProperty("--sky1",c.sky[0]); sc.style.setProperty("--sky2",c.sky[1]);
-  // 雲
+  const k = timeOfDay(new Date().getHours()), key = k+"/"+theme, sc = $("scene");
+  if(sceneKey===key) return;
+  sceneKey = key; sc.dataset.tod = k; sc.dataset.theme = theme;
+  const c = TOD[k], tunnel = theme==="tunnel";
+  sc.style.setProperty("--sky1", tunnel ? "#1E2228" : c.sky[0]);
+  sc.style.setProperty("--sky2", tunnel ? "#353B44" : c.sky[1]);
   $("lyClouds").style.backgroundImage = svgTile(320,36,
     `<g fill='${c.cloud}' opacity='.9'><ellipse cx='40' cy='22' rx='26' ry='9'/><ellipse cx='58' cy='16' rx='16' ry='10'/><ellipse cx='200' cy='14' rx='22' ry='7'/><ellipse cx='214' cy='10' rx='12' ry='7'/></g>`);
-  // 遠くのビル（夕方と夜は窓に明かり）
-  const B = [[0,26,30],[28,18,40],[48,30,22],[80,22,44],[104,34,30],[140,16,38],[158,28,24],[188,24,42],[214,24,28]];
-  let far = "";
-  B.forEach(([x,w,h],n)=>{
-    far += `<rect x='${x}' y='${48-h}' width='${w}' height='${h}' fill='${c.far}'/>`;
-    if(c.win) for(let wy=48-h+5; wy<44; wy+=7) for(let wx=x+4; wx<x+w-3; wx+=7)
-      if((wx*7+wy*13+n)%5<2) far += `<rect x='${wx}' y='${wy}' width='3' height='3' fill='${c.win}'/>`;
-  });
-  $("lyFar").style.backgroundImage = svgTile(240,48,far);
-  // 手前の木と電柱
-  $("lyNear").style.backgroundImage = svgTile(220,44,
-    `<g fill='${c.near}'><circle cx='20' cy='30' r='12'/><circle cx='34' cy='34' r='9'/><circle cx='96' cy='32' r='11'/><circle cx='186' cy='29' r='13'/></g>`+
-    `<g fill='${c.pole}'><rect x='140' y='4' width='3' height='40'/><rect x='132' y='8' width='19' height='2.5'/></g>`);
-  // 星と月（月が1つだけ見えるよう、画面の最大幅より広い絵にする）
   let stars = "";
   for(let n=0;n<30;n++) stars += `<circle cx='${(n*197)%600}' cy='${(n*53)%56+3}' r='${0.7+(n%3)*0.35}'/>`;
   $("lyStars").style.backgroundImage = svgTile(600,60,
     `<g fill='#FFFFFF'>${stars}</g><circle cx='290' cy='16' r='7' fill='#FFF3C4'/><circle cx='294' cy='13' r='6' fill='${c.sky[0]}'/>`);
+  const pole = `<g fill='${c.pole}'><rect x='140' y='4' width='3' height='40'/><rect x='132' y='8' width='19' height='2.5'/></g>`;
+  let far = "", near = "";
+  if(theme==="city"){
+    far = buildings([[0,26,30],[28,18,40],[48,30,22],[80,22,44],[104,34,30],[140,16,38],[158,28,24],[188,24,42],[214,24,28]],c,60);
+    near = `<g fill='${c.near}'><circle cx='20' cy='30' r='12'/><circle cx='34' cy='34' r='9'/><circle cx='96' cy='32' r='11'/><circle cx='186' cy='29' r='13'/></g>`+pole;
+  }else if(theme==="town"){ // 三角屋根の家と低いマンション
+    const houses = [[6,22,14],[40,20,12],[98,24,15],[150,20,13],[200,22,14]];
+    far = buildings([[66,26,30],[124,22,24],[176,18,28]],c,60);
+    houses.forEach(([x,w,h])=>{
+      far += `<rect x='${x}' y='${60-h}' width='${w}' height='${h}' fill='${c.far}'/><path d='M${x-3} ${60-h}L${x+w/2} ${60-h-10}L${x+w+3} ${60-h}Z' fill='${c.roof}'/>`;
+      if(c.win) far += `<rect x='${x+w/2-2}' y='${60-h+4}' width='4' height='4' fill='${c.win}'/>`;
+    });
+    near = `<g fill='${c.near}'><rect x='0' y='34' width='70' height='10' rx='5'/><circle cx='110' cy='31' r='10'/><rect x='160' y='35' width='60' height='9' rx='4'/></g>`+pole;
+  }else if(theme==="country"){ // 遠くの山と丘、田んぼ
+    far = `<path d='M30 60L110 14L190 60Z' fill='${c.mtn}'/><path d='M95 23L110 14L125 23L118 26L110 22L102 26Z' fill='#FFFFFF' opacity='.85'/>`+
+          `<ellipse cx='20' cy='62' rx='60' ry='22' fill='${c.hill}'/><ellipse cx='200' cy='64' rx='70' ry='24' fill='${c.hill}'/>`+
+          `<rect x='150' y='44' width='14' height='10' fill='${c.far}'/><path d='M147 44L157 37L167 44Z' fill='${c.roof}'/>`;
+    near = `<rect x='0' y='30' width='220' height='14' fill='${c.field}'/><g stroke='${c.near}' stroke-width='1.2' opacity='.6'>`+
+           Array.from({length:22},(_,n)=>`<path d='M${n*10+3} 33v8'/>`).join("")+`</g><g fill='${c.near}'><circle cx='60' cy='26' r='9'/></g>`+pole;
+  }else if(theme==="river"){ // 低い対岸の街と川面
+    far = buildings([[10,22,16],[40,16,20],[70,28,14],[120,20,18],[160,26,15],[200,18,20]],c,60);
+    near = `<rect x='0' y='22' width='220' height='22' fill='${c.water}'/><g stroke='#FFFFFF' stroke-width='1.5' fill='none' opacity='.6' stroke-linecap='round'>`+
+           `<path d='M14 30q5-3 10 0'/><path d='M80 37q5-3 10 0'/><path d='M150 29q5-3 10 0'/><path d='M196 39q5-3 10 0'/></g>`;
+  }else{ // トンネル: 壁と流れる照明
+    far = `<rect width='160' height='60' fill='#2B3038'/><rect x='70' y='10' width='22' height='5' rx='2.5' fill='#FFD27A'/><circle cx='81' cy='12' r='9' fill='#FFD27A' opacity='.18'/>`;
+    near = `<g stroke='#4A515C' stroke-width='2'><path d='M0 30H220M0 35H220'/></g><rect x='100' y='26' width='4' height='14' fill='#4A515C'/>`;
+  }
+  $("lyFar").style.backgroundImage = svgTile(tunnel ? 160 : 240, 60, far);
+  $("lyNear").style.backgroundImage = svgTile(220,44,near);
+  $("lyBridge").style.backgroundImage = svgTile(120,46,
+    `<g stroke='${c.truss}' stroke-width='3' fill='none' stroke-linejoin='round'><path d='M0 2H120'/><path d='M0 44L30 2L60 44L90 2L120 44'/></g>`);
+  TILE.far = tunnel ? 160 : 240;
+}
+
+// 路線ごとに、川を渡る位置と地下区間を線路沿いの位置(m)で求めておく
+function prepareScene(line){
+  lineRivers = RIVERS.map(([name,lat,lng])=>{ const l = locate(lat,lng); return l.d<RIVER_NEAR_M ? {name, s:G.cum[l.i]+l.t*l.len} : null; }).filter(Boolean);
+  const idx = n => line.stations.findIndex(x=>x.name===n);
+  lineTunnels = (line.tunnels||[]).map(([a,b])=>[G.cum[idx(a)],G.cum[idx(b)]].sort((x,y)=>x-y)).filter(r=>r.every(x=>x!==undefined));
+}
+
+// 今いる場所の景色のパターン
+function themeAt(loc,along){
+  if(lineTunnels.some(([a,b])=>along>=a && along<=b)) return ["tunnel",""];
+  const r = lineRivers.find(x=>Math.abs(ds(x.s,along))<RIVER_SHOW_M);
+  if(r) return ["river",r.name];
+  const lat = ST[loc.i][2]+(ST[loc.i+1][2]-ST[loc.i][2])*loc.t, lng = ST[loc.i][3]+(ST[loc.i+1][3]-ST[loc.i][3])*loc.t;
+  if(CITIES.some(([la,ln,r])=>meters(la,ln,lat,lng)<r)) return ["city",""];
+  return [meters(35.681,139.767,lat,lng)>CITY_FAR_M ? "country" : "town", ""];
 }
 
 function sceneFrame(t){
   const dt = Math.min(0.1, (t-(lastFrame||t))/1000); lastFrame = t;
   const v = performance.now()-sceneVAt < 10000 ? sceneV : 0; // 10秒更新がなければ止まったとみなす
   sceneOff.clouds -= (3 + v*SCENE_PX_PER_M.clouds)*dt; // 雲は止まっていてもゆっくり流れる
-  sceneOff.far    -= v*SCENE_PX_PER_M.far*dt;
-  sceneOff.near   -= v*SCENE_PX_PER_M.near*dt;
-  for(const k of ["clouds","far","near"]){
+  for(const k of ["far","near","bridge"]) sceneOff[k] -= v*(theme==="tunnel" && k==="far" ? SCENE_PX_PER_M.near : SCENE_PX_PER_M[k])*dt;
+  for(const k of ["clouds","far","near","bridge"]){
     sceneOff[k] %= TILE[k];
     $("ly"+k[0].toUpperCase()+k.slice(1)).style.backgroundPositionX = sceneOff[k].toFixed(1)+"px";
   }
   requestAnimationFrame(sceneFrame);
 }
 
-function say(text,hop){
+// セリフ。重なったら順番に出す。force でなければ同じセリフは20秒あける
+function say(text,{hop=false,force=false}={}){
   const now = Date.now();
-  if(lastSay.text===text && now-lastSay.t < SAY_GAP_MS) return; // GPSの揺れで同じ台詞を繰り返さない
-  lastSay = {text, t:now};
-  const b = $("bubble"), tr = $("train");
-  b.textContent = text; b.classList.add("show");
-  clearTimeout(bubbleTimer); bubbleTimer = setTimeout(()=>b.classList.remove("show"), 2500);
-  if(hop && !reduceMotion){ tr.classList.remove("hop"); void tr.offsetWidth; tr.classList.add("hop"); }
+  if(!force && now-(lastSaid[text]||-Infinity) < SAY_GAP_MS) return;
+  lastSaid[text] = now;
+  if(force){ sayQueue = []; saying = false; }
+  if(sayQueue.length<3) sayQueue.push({text,hop});
+  if(!saying) nextSay();
+}
+function nextSay(){
+  const m = sayQueue.shift(), b = $("bubble"), tr = $("train");
+  if(!m){ saying = false; b.classList.remove("show"); return; }
+  saying = true;
+  b.textContent = m.text; b.classList.add("show"); placeBubble();
+  if(m.hop && !reduceMotion){ tr.classList.remove("hop"); void tr.offsetWidth; tr.classList.add("hop"); }
+  clearTimeout(nextSay.timer); nextSay.timer = setTimeout(nextSay, SAY_SHOW_MS);
+}
+
+// 吹き出しを電車の真上に置き、車窓からはみ出すときは内側に寄せる
+function placeBubble(){
+  const b = $("bubble"), tr = $("train"), sc = $("scene");
+  const trBox = tr.getBoundingClientRect(), scBox = sc.getBoundingClientRect(), bw = b.offsetWidth;
+  const center = trBox.left + trBox.width/2 - scBox.left;
+  const left = Math.max(4, Math.min(scBox.width - bw - 4, center - bw/2));
+  b.style.left = (left - (trBox.left - scBox.left)) + "px";
 }
 
 function setTrain(state,v){
@@ -525,27 +607,60 @@ function setTrain(state,v){
   if(state==="run") tr.style.setProperty("--spin", Math.max(0.12, 2.5/v).toFixed(2)+"s");
 }
 
-// render から呼ぶ: 速さ・駅への到着に合わせてキャラ電車と景色を動かす
-function animateTrain(v,atIdx,offRoute,tt,now){
+// render から呼ぶ: 速さ・場所・駅への到着に合わせてキャラ電車と景色を動かし、セリフを言う
+function animateTrain({v,atIdx,offRoute,tt,now,loc,along,ni,dir}){
   sceneV = offRoute ? 0 : Math.max(0,v); sceneVAt = performance.now();
-  if(offRoute){ setTrain("sleep"); stopSince = null; }
-  else if(v>=MOVING_MPS){ setTrain("run",v); stopSince = null; }
-  else{
+  placeBubble();
+  if(offRoute){
+    setTrain("sleep"); stopSince = null;
+    if(!wasOff) say("どの電車かな？");
+    wasOff = true; return;
+  }
+  wasOff = false;
+  if(!greeted){ greeted = true; say(GREET[timeOfDay(new Date().getHours())]); }
+
+  // 景色のパターン
+  const [th,rn] = themeAt(loc,along);
+  if(th!==theme){
+    if(th==="tunnel") say("トンネルだ〜");
+    else if(theme==="tunnel") say("まぶしい！");
+    if(th==="river") say(`${rn}だ〜！`);
+    theme = th; riverName = rn; paintScene();
+  }
+
+  // 走る・止まる・眠る
+  if(v>=MOVING_MPS){
+    if(wasSleep && stopSince!==null) say("あ、うごいた！");
+    setTrain("run",v); stopSince = null; waitSaid = false; sleepSaid = false; wasSleep = false;
+    if(v>=FAST_MPS && !fastSaid){ fastSaid = true; say("はやーい！"); } // 速い区間に入るたびに1回だけ
+    if(v<FAST_MPS*0.75) fastSaid = false;
+  }else{
     if(stopSince===null) stopSince = now;
-    setTrain(now-stopSince > STOP_SLEEP_MS ? "sleep" : "stop");
+    const sleep = now-stopSince > STOP_SLEEP_MS;
+    setTrain(sleep ? "sleep" : "stop"); wasSleep = sleep;
+    if(sleep && !sleepSaid){ sleepSaid = true; say("ねむくなってきた…"); }
+    if(atIdx<0 && !waitSaid && now-stopSince > SIGNAL_WAIT_MS){ waitSaid = true; say("ちょっとまってね…"); }
   }
-  if(!offRoute){
-    if(prevAt===-1 && atIdx>=0) say("とうちゃく！",true);
-    if(prevAt>=0 && atIdx===-1) say("しゅっぱつ！",false);
-    prevAt = atIdx;
+
+  // 駅に近づく・着く・出る
+  if(atIdx<0 && ni>=0 && v>=MOVING_MPS && soonIdx!==ni && Math.max(0,ahead(along,G.cum[ni],dir))<400){ soonIdx = ni; say(`まもなく ${ST[ni][0]}！`); }
+  if(prevAt===-1 && atIdx>=0){
+    const terminal = stopFrom(atIdx+dir,dir)<0;
+    say(terminal ? "終点だよ、おつかれさま！" : "とうちゃく！",{hop:true});
+    if(!terminal && XFER[atIdx].length) say(`${XFER[atIdx].slice(0,2).map(l=>l.name).join("・")}に乗りかえできるよ`);
   }
-  // 吹き出しが車窓からはみ出さないよう、端では寄せる
-  $("train").style.setProperty("--bx", tt<0.2 ? "-25%" : tt>0.8 ? "-75%" : "-50%");
+  if(prevAt>=0 && atIdx===-1) say("しゅっぱつ！");
+  prevAt = atIdx;
 }
 
 function resetTrain(){
-  prevAt = null; stopSince = null; sceneV = 0; setTrain("sleep");
+  prevAt = null; stopSince = null; sceneV = 0; greeted = false; soonIdx = -1;
+  waitSaid = sleepSaid = wasSleep = wasOff = fastSaid = false;
+  setTrain("sleep");
 }
+
+// キャラ電車をタップすると何か言う
+$("train").addEventListener("click", ()=>say(TAP_LINES[Math.floor(Math.random()*TAP_LINES.length)],{hop:true,force:true}));
 
 function setStatus(live,text,acc){
   $("status").classList.toggle("live",live);
@@ -621,6 +736,7 @@ function initLine(line){
   XFER = ST.map((s,k)=>!STOP[k] ? [] : Object.values(LINES).filter(l=>l.id!==line.id && l.stations.some(x=>x.name===s[0] && !x.pass)));
   autoCand = null; autoN = 0; noAuto.clear();
   $("xfer").replaceChildren();
+  prepareScene(line); theme = "city"; paintScene();
 
   const root = document.documentElement.style, c = line.color||{};
   const vars = {"--c-line":c.light, "--c-line-soft":c.lightSoft, "--c-line-dark":c.dark, "--c-line-dark-soft":c.darkSoft, "--c-on-line":c.onLine};

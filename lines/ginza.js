@@ -5,6 +5,7 @@
   name: "銀座線",
   color: { light: "#FF9500", lightSoft: "#FFE9CC", dark: "#FFA733", darkSoft: "#3A2810", onLine: "#23272D" },
   note: "渋谷駅付近を除いて地下を走るため、GPSで位置が取れないことがほとんどです。",
+  tunnels: [["表参道", "浅草"]],  // 地下区間 [始まりの駅, 終わりの駅]（車窓をトンネルにする）
   stations: [
     { name: "渋谷",       kana: "しぶや", lat: 35.65851, lng: 139.70133 },
     { name: "表参道",     kana: "おもてさんどう", lat: 35.66515, lng: 139.71252 },

@@ -5,6 +5,7 @@
   name: "東西線",
   color: { light: "#009BBF", lightSoft: "#D2EEF5", dark: "#2FB9DA", darkSoft: "#0F2F38" },
   note: "中野〜南砂町は地下区間のため、位置が取れないことがあります。",
+  tunnels: [["落合", "南砂町"]],  // 地下区間 [始まりの駅, 終わりの駅]（車窓をトンネルにする）
   stations: [
     { name: "中野",     kana: "なかの", lat: 35.70583, lng: 139.66556 },
     { name: "落合",     kana: "おちあい", lat: 35.71074, lng: 139.68634 },
