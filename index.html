@@ -303,6 +303,7 @@ function buildRoute(){
   const ol=$("route");
   ST.forEach((s,k)=>{
     const li=document.createElement("li");
+    if(!STOP[k]) li.className="pass";
     li.innerHTML = STOP[k] ? `<span>${s[0]}</span><span class="xfs">${xferChips(XFER[k])}</span><span class="tag"></span>`
                            : `<span>${s[0]}</span><span class="pv">通過</span><span class="tag"></span>`;
     ol.appendChild(li);
