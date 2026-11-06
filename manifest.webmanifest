@@ -1,0 +1,16 @@
+{
+  "name": "えきなう",
+  "short_name": "えきなう",
+  "description": "いま乗っている電車の位置と次の駅がわかる",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EEF0F2",
+  "theme_color": "#EEF0F2",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

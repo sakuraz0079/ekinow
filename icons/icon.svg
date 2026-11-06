@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#FFF1DF"/>
+  <!-- レール -->
+  <rect x="70" y="440" width="372" height="12" rx="6" fill="#D9C2A7"/>
+  <!-- 車輪 -->
+  <circle cx="186" cy="424" r="26" fill="#5A3B2E"/>
+  <circle cx="326" cy="424" r="26" fill="#5A3B2E"/>
+  <!-- 車体 -->
+  <clipPath id="body"><rect x="116" y="138" width="280" height="282" rx="72"/></clipPath>
+  <rect x="116" y="138" width="280" height="282" rx="72" fill="#FF8A4C"/>
+  <rect x="116" y="368" width="280" height="22" fill="#E8653A" clip-path="url(#body)"/>
+  <!-- 窓 -->
+  <rect x="150" y="174" width="212" height="112" rx="34" fill="#D6F1FF"/>
+  <!-- 目 -->
+  <circle cx="212" cy="230" r="17" fill="#3B2418"/>
+  <circle cx="300" cy="230" r="17" fill="#3B2418"/>
+  <circle cx="218" cy="223" r="6" fill="#FFFFFF"/>
+  <circle cx="306" cy="223" r="6" fill="#FFFFFF"/>
+  <!-- ほっぺ -->
+  <ellipse cx="172" cy="322" rx="22" ry="14" fill="#FFB3BE"/>
+  <ellipse cx="340" cy="322" rx="22" ry="14" fill="#FFB3BE"/>
+  <!-- 口 -->
+  <path d="M228 318 Q256 346 284 318" fill="none" stroke="#3B2418" stroke-width="11" stroke-linecap="round"/>
+  <!-- いまここピン -->
+  <path d="M256 140 C226 104 214 88 214 70 a42 42 0 0 1 84 0 c0 18 -12 34 -42 70 z" fill="#FF4F78"/>
+  <circle cx="256" cy="70" r="15" fill="#FFFFFF"/>
+</svg>
