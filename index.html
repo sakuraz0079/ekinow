@@ -78,9 +78,42 @@ main{max-width:520px;margin:0 auto;padding:14px 14px 32px}
 /* --n: 文字数。長い駅名も1行に収める */
 .name{--n:4;font-size:min(64px,14vw,calc((min(100vw,520px) - 72px) / (var(--n) * 1.05)));white-space:nowrap;font-weight:900;letter-spacing:.04em;line-height:1.1;margin:2px 0}
 .kana{font-size:15px;color:var(--muted);letter-spacing:.12em;min-height:22px}
-.band{background:var(--line);height:34px;position:relative;margin-top:12px}
-.track{position:absolute;left:18px;right:18px;top:50%;height:4px;margin-top:-2px;background:rgba(255,255,255,.55);border-radius:2px}
-.train{position:absolute;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#fff;border:5px solid var(--ink);transition:left .8s ease;left:0}
+/* 車窓（空・雲・遠景・近景は JS で時間帯ごとに描き、速さに合わせて流す） */
+.scene{position:relative;height:104px;margin-top:12px;overflow:hidden;background:linear-gradient(var(--sky1,#7EC8F2),var(--sky2,#CDEBFA))}
+.scene .layer{position:absolute;left:0;right:0;background-repeat:repeat-x}
+.scene .stars{top:0;height:60px;display:none}
+.scene[data-tod="night"] .stars{display:block}
+.scene .clouds{top:6px;height:36px}
+.scene .far{bottom:22px;height:48px}
+.scene .near{bottom:22px;height:44px}
+.scene .rail{position:absolute;left:0;right:0;bottom:0;height:22px;background:var(--line)}
+.scene .rail::before{content:"";position:absolute;left:0;right:0;top:3px;height:3px;background:rgba(255,255,255,.75)}
+.scene .track{position:absolute;left:26px;right:26px;bottom:22px;height:0}
+.scene .plat{position:absolute;bottom:0;width:48px;height:9px;margin-left:-24px;background:#D9DDE2;border-top:3px solid #F5C400;border-radius:2px 2px 0 0}
+.scene .plat.l{left:0}.scene .plat.r{left:100%}
+
+/* キャラ電車 */
+.train{position:absolute;bottom:3px;width:46px;height:46px;margin-left:-23px;left:0;transition:left .8s ease}
+.train svg{display:block;width:100%;height:100%;overflow:visible}
+.train .bd{transform-box:fill-box;transform-origin:50% 100%}
+.train .wh{transform-box:fill-box;transform-origin:center}
+.train .ey{transform-box:fill-box;transform-origin:center}
+.train .cl{display:none}
+.train.run .bd{animation:bob .3s ease-in-out infinite alternate}
+.train.run .wh{animation:spin var(--spin,1s) linear infinite}
+.train.stop .ey{animation:blink 3.6s infinite}
+.train.sleep .ey{display:none}
+.train.sleep .cl{display:inline}
+.train.hop svg{animation:hop .9s ease-out}
+.train .zzz{position:absolute;left:70%;bottom:85%;font-size:11px;font-weight:900;color:#fff;text-shadow:0 0 3px rgba(0,0,0,.4);opacity:0;pointer-events:none}
+.train.sleep .zzz{animation:zzz 2.6s ease-in-out infinite}
+.train .bubble{position:absolute;bottom:105%;left:50%;transform:translateX(var(--bx,-50%));white-space:nowrap;background:#fff;color:#23272D;font-size:11px;font-weight:900;padding:3px 8px;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.2);opacity:0;transition:opacity .3s;pointer-events:none}
+.train .bubble.show{opacity:1}
+@keyframes bob{to{transform:translateY(-1.5px)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}
+@keyframes hop{0%,100%{transform:translateY(0)}30%{transform:translateY(-14px)}55%{transform:translateY(0)}75%{transform:translateY(-5px)}}
+@keyframes zzz{0%{opacity:0;transform:translate(0,4px)}30%{opacity:1}100%{opacity:0;transform:translate(8px,-14px)}}
 .ends{display:flex;justify-content:space-between;padding:10px 16px 14px;font-size:17px;font-weight:700;gap:8px}
 .ends span{max-width:48%}
 .ends .r{text-align:right}
@@ -125,7 +158,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .route li .xfs{display:flex;flex-wrap:wrap;gap:2px 8px;font-size:11px;color:var(--muted)}
 .route li .tag{margin-left:auto;font-size:12px;font-weight:700}
 .route li .tag:not(:empty){background:var(--line);color:var(--on-line);border-radius:999px;padding:1px 8px}
-@media (prefers-reduced-motion:reduce){.train{transition:none}}
+@media (prefers-reduced-motion:reduce){.train{transition:none}.train *,.train svg{animation:none!important}}
 </style>
 </head>
 <body>
@@ -142,7 +175,33 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
       <div class="name" id="name"></div>
       <div class="kana" id="kana"></div>
     </div>
-    <div class="band"><div class="track"><div class="train" id="train"></div></div></div>
+    <div class="scene" id="scene" aria-hidden="true">
+      <div class="layer stars" id="lyStars"></div>
+      <div class="layer clouds" id="lyClouds"></div>
+      <div class="layer far" id="lyFar"></div>
+      <div class="layer near" id="lyNear"></div>
+      <div class="rail"></div>
+      <div class="track">
+        <div class="plat l"></div><div class="plat r"></div>
+        <div class="train sleep" id="train">
+          <svg viewBox="0 0 64 64">
+            <g class="bd">
+              <rect x="9" y="6" width="46" height="46" rx="13" style="fill:var(--line)"/>
+              <rect x="9" y="41" width="46" height="4" fill="rgba(0,0,0,.15)"/>
+              <rect x="15" y="12" width="34" height="17" rx="7" fill="#D6F1FF"/>
+              <g class="ey"><circle cx="26" cy="20.5" r="3.2" fill="#3B2418"/><circle cx="38" cy="20.5" r="3.2" fill="#3B2418"/><circle cx="27" cy="19.4" r="1" fill="#fff"/><circle cx="39" cy="19.4" r="1" fill="#fff"/></g>
+              <path class="cl" d="M23 21q3 2.4 6 0M35 21q3 2.4 6 0" stroke="#3B2418" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+              <ellipse cx="18" cy="34" rx="3.6" ry="2.3" fill="#FFB3BE"/><ellipse cx="46" cy="34" rx="3.6" ry="2.3" fill="#FFB3BE"/>
+              <path d="M28 33q4 4 8 0" stroke="#3B2418" stroke-width="2" fill="none" stroke-linecap="round"/>
+            </g>
+            <g class="wh"><circle cx="21" cy="56" r="6.5" fill="#5A3B2E"/><path d="M21 50.5v11M15.5 56h11" stroke="#C9A98F" stroke-width="1.6"/></g>
+            <g class="wh"><circle cx="43" cy="56" r="6.5" fill="#5A3B2E"/><path d="M43 50.5v11M37.5 56h11" stroke="#C9A98F" stroke-width="1.6"/></g>
+          </svg>
+          <span class="zzz">z z</span>
+          <span class="bubble" id="bubble"></span>
+        </div>
+      </div>
+    </div>
     <div class="ends"><span id="endL"></span><span class="r" id="endR"></span></div>
     <div class="remain" id="remain"></div>
     <div class="xfer" id="xfer"></div>
@@ -285,6 +344,7 @@ function render(loc,now=Date.now()){
   $("endL").innerHTML = `${ST[pi][0]}<small>前の駅</small>`;
   $("endR").innerHTML = `${ST[ni][0]}<small>${atIdx>=0?"":"次の駅"}</small>`;
   $("train").style.left = (Math.max(0,Math.min(1,tt))*100)+"%";
+  animateTrain(v,atIdx,offRoute,tt,now);
 
   // 路線図
   const items = $("route").children;
@@ -368,6 +428,106 @@ function autoSwitchTo(id){
   clearTimeout(autoNoteTimer); autoNoteTimer = setTimeout(()=>{ note.hidden = true; }, AUTO_NOTE_MS);
 }
 
+// ---- 車窓とキャラ電車 ----
+const TOD = { // 時間帯ごとの色
+  morning:{sky:["#FFD6B0","#AEDCF7"], far:"#9FB7CC", win:null,      near:"#6BA368", pole:"#7A8796", cloud:"#FFFFFF"},
+  day:    {sky:["#7EC8F2","#CDEBFA"], far:"#A8BFD3", win:null,      near:"#5E9E5B", pole:"#7A8796", cloud:"#FFFFFF"},
+  evening:{sky:["#F59A62","#FBD3A5"], far:"#8C7A8F", win:"#FFE08A", near:"#4F6F4C", pole:"#5D5566", cloud:"#FFE1C7"},
+  night:  {sky:["#0E1A3A","#2A3A6B"], far:"#2C3550", win:"#FFD966", near:"#1F2D2A", pole:"#3A4256", cloud:"#4A5480"},
+};
+const TILE = {clouds:320, far:240, near:220}; // 各層の絵の幅(px)
+const SCENE_PX_PER_M = {clouds:0.3, far:1.5, near:6};   // 1m進むごとに流れる量。手前ほど速い
+const STOP_SLEEP_MS = 30000, SAY_GAP_MS = 20000;
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let sceneV = 0, sceneVAt = 0, sceneOff = {clouds:0, far:0, near:0}, lastFrame = 0;
+let prevAt = null, stopSince = null, lastSay = {text:"", t:-Infinity}, bubbleTimer = null;
+
+function svgTile(w,h,body){
+  return `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>${body}</svg>`)}")`;
+}
+
+function timeOfDay(h){ return h>=5&&h<9 ? "morning" : h>=9&&h<16 ? "day" : h>=16&&h<19 ? "evening" : "night"; }
+
+function paintScene(){
+  const k = timeOfDay(new Date().getHours()), c = TOD[k], sc = $("scene");
+  if(sc.dataset.tod===k) return;
+  sc.dataset.tod = k;
+  sc.style.setProperty("--sky1",c.sky[0]); sc.style.setProperty("--sky2",c.sky[1]);
+  // 雲
+  $("lyClouds").style.backgroundImage = svgTile(320,36,
+    `<g fill='${c.cloud}' opacity='.9'><ellipse cx='40' cy='22' rx='26' ry='9'/><ellipse cx='58' cy='16' rx='16' ry='10'/><ellipse cx='200' cy='14' rx='22' ry='7'/><ellipse cx='214' cy='10' rx='12' ry='7'/></g>`);
+  // 遠くのビル（夕方と夜は窓に明かり）
+  const B = [[0,26,30],[28,18,40],[48,30,22],[80,22,44],[104,34,30],[140,16,38],[158,28,24],[188,24,42],[214,24,28]];
+  let far = "";
+  B.forEach(([x,w,h],n)=>{
+    far += `<rect x='${x}' y='${48-h}' width='${w}' height='${h}' fill='${c.far}'/>`;
+    if(c.win) for(let wy=48-h+5; wy<44; wy+=7) for(let wx=x+4; wx<x+w-3; wx+=7)
+      if((wx*7+wy*13+n)%5<2) far += `<rect x='${wx}' y='${wy}' width='3' height='3' fill='${c.win}'/>`;
+  });
+  $("lyFar").style.backgroundImage = svgTile(240,48,far);
+  // 手前の木と電柱
+  $("lyNear").style.backgroundImage = svgTile(220,44,
+    `<g fill='${c.near}'><circle cx='20' cy='30' r='12'/><circle cx='34' cy='34' r='9'/><circle cx='96' cy='32' r='11'/><circle cx='186' cy='29' r='13'/></g>`+
+    `<g fill='${c.pole}'><rect x='140' y='4' width='3' height='40'/><rect x='132' y='8' width='19' height='2.5'/></g>`);
+  // 星と月（月が1つだけ見えるよう、画面の最大幅より広い絵にする）
+  let stars = "";
+  for(let n=0;n<30;n++) stars += `<circle cx='${(n*197)%600}' cy='${(n*53)%56+3}' r='${0.7+(n%3)*0.35}'/>`;
+  $("lyStars").style.backgroundImage = svgTile(600,60,
+    `<g fill='#FFFFFF'>${stars}</g><circle cx='290' cy='16' r='7' fill='#FFF3C4'/><circle cx='294' cy='13' r='6' fill='${c.sky[0]}'/>`);
+}
+
+function sceneFrame(t){
+  const dt = Math.min(0.1, (t-(lastFrame||t))/1000); lastFrame = t;
+  const v = performance.now()-sceneVAt < 10000 ? sceneV : 0; // 10秒更新がなければ止まったとみなす
+  sceneOff.clouds -= (3 + v*SCENE_PX_PER_M.clouds)*dt; // 雲は止まっていてもゆっくり流れる
+  sceneOff.far    -= v*SCENE_PX_PER_M.far*dt;
+  sceneOff.near   -= v*SCENE_PX_PER_M.near*dt;
+  for(const k of ["clouds","far","near"]){
+    sceneOff[k] %= TILE[k];
+    $("ly"+k[0].toUpperCase()+k.slice(1)).style.backgroundPositionX = sceneOff[k].toFixed(1)+"px";
+  }
+  requestAnimationFrame(sceneFrame);
+}
+
+function say(text,hop){
+  const now = Date.now();
+  if(lastSay.text===text && now-lastSay.t < SAY_GAP_MS) return; // GPSの揺れで同じ台詞を繰り返さない
+  lastSay = {text, t:now};
+  const b = $("bubble"), tr = $("train");
+  b.textContent = text; b.classList.add("show");
+  clearTimeout(bubbleTimer); bubbleTimer = setTimeout(()=>b.classList.remove("show"), 2500);
+  if(hop && !reduceMotion){ tr.classList.remove("hop"); void tr.offsetWidth; tr.classList.add("hop"); }
+}
+
+function setTrain(state,v){
+  const tr = $("train");
+  tr.classList.remove("run","stop","sleep");
+  tr.classList.add(state);
+  if(state==="run") tr.style.setProperty("--spin", Math.max(0.12, 2.5/v).toFixed(2)+"s");
+}
+
+// render から呼ぶ: 速さ・駅への到着に合わせてキャラ電車と景色を動かす
+function animateTrain(v,atIdx,offRoute,tt,now){
+  sceneV = offRoute ? 0 : Math.max(0,v); sceneVAt = performance.now();
+  if(offRoute){ setTrain("sleep"); stopSince = null; }
+  else if(v>=MOVING_MPS){ setTrain("run",v); stopSince = null; }
+  else{
+    if(stopSince===null) stopSince = now;
+    setTrain(now-stopSince > STOP_SLEEP_MS ? "sleep" : "stop");
+  }
+  if(!offRoute){
+    if(prevAt===-1 && atIdx>=0) say("とうちゃく！",true);
+    if(prevAt>=0 && atIdx===-1) say("しゅっぱつ！",false);
+    prevAt = atIdx;
+  }
+  // 吹き出しが車窓からはみ出さないよう、端では寄せる
+  $("train").style.setProperty("--bx", tt<0.2 ? "-25%" : tt>0.8 ? "-75%" : "-50%");
+}
+
+function resetTrain(){
+  prevAt = null; stopSince = null; sceneV = 0; setTrain("sleep");
+}
+
 function setStatus(live,text,acc){
   $("status").classList.toggle("live",live);
   $("statusText").textContent=text;
@@ -385,7 +545,7 @@ function stopAll(){
   try{wakeLock&&wakeLock.release();}catch(e){}
   wakeLock=null;
   $("startBtn").textContent="位置情報を開始"; $("demoBtn").textContent="デモ走行";
-  setStatus(false,"停止中");
+  setStatus(false,"停止中"); resetTrain();
 }
 
 $("startBtn").onclick=()=>{
@@ -393,7 +553,7 @@ $("startBtn").onclick=()=>{
   if(watchId!==null){stopAll();return;}
   stopAll();
   if(!("geolocation" in navigator)){ $("msg").textContent="この画面では位置情報が使えません。Safariで直接開いてください。"; return; }
-  setStatus(false,"位置を取得中…"); track = []; band = {key:null,t:0};
+  setStatus(false,"位置を取得中…"); track = []; band = {key:null,t:0}; resetTrain();
   keepAwake();
   watchId = navigator.geolocation.watchPosition(p=>{
     setStatus(true,"現在地を表示中",`精度 ±${Math.round(p.coords.accuracy)}m`);
@@ -410,7 +570,7 @@ $("startBtn").onclick=()=>{
 $("demoBtn").onclick=()=>{
   if(!LINE) return;
   if(demoTimer){stopAll();return;}
-  stopAll(); autoDir=0; track=[]; band={key:null,t:0};
+  stopAll(); autoDir=0; track=[]; band={key:null,t:0}; resetTrain();
   let s=0, vt=0; const dir = dirMode==="-1"?-1:1, total=(ST.length-1)*1000;
   setStatus(true,"デモ走行中");
   keepAwake();
@@ -432,7 +592,7 @@ document.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{
 
 function initLine(line){
   if(demoTimer) stopAll();
-  LINE = line; autoDir = 0; band = {key:null,t:0};
+  LINE = line; autoDir = 0; band = {key:null,t:0}; prevAt = null;
   ST = line.stations.map(s=>[s.name,s.kana,s.lat,s.lng]);
   STOP = line.stations.map(s=>!s.pass);
   G = GEOMS[line.id] || geom(line);
@@ -467,6 +627,9 @@ function loadScript(src){
     document.head.appendChild(s);
   });
 }
+
+paintScene(); setInterval(paintScene, 60000);
+if(!reduceMotion) requestAnimationFrame(sceneFrame);
 
 (async function loadLines(){
   const ids = (window.EKINOW_LINE_IDS||[]).filter(id=>/^[a-z0-9-]+$/.test(id));
