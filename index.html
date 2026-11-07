@@ -56,6 +56,10 @@ main{max-width:520px;margin:0 auto;padding:14px 14px 32px}
 .status{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);padding:2px 4px 10px}
 .status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:1px}
 .status.live .dot{background:var(--ok)}
+.status.est .dot{background:#F59E0B}
+.sign.est .lead::after{content:"（推定）";color:#B45309;font-weight:700}
+.route li[data-k]{cursor:pointer}
+.route li[data-k]:active{background:var(--line-soft)}
 
 /* 路線選択 */
 .pick{position:relative;margin:0 0 10px}
@@ -172,7 +176,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
   <div class="suggest" id="suggest" role="status" aria-live="polite" hidden></div>
   <div class="suggest" id="autoNote" role="status" aria-live="polite" hidden></div>
 
-  <section class="sign" aria-live="polite">
+  <section class="sign" id="sign" aria-live="polite">
     <div class="sign-top">
       <div class="lead" id="lead">位置情報を開始してください</div>
       <div class="name" id="name"></div>
@@ -243,6 +247,11 @@ let track = []; // 直近の {t: ミリ秒, s: 線路沿いの位置(m)}。速�
 const DIR_MIN_SPAN_MS = 8000, DIR_MIN_MOVE_M = 120; // 進行方向はこれだけ進んだら決める（GPSの揺れでは届かない距離）
 const BAND_BACK_M = 150; // 帯の丸印はこれ未満の後戻り（GPSの揺れ）では左へ戻さない
 let band = {key:null, t:0};
+// 位置の精度による扱い: GOOD 以内はそのまま、FAIR 以内は推定の合わせ直しだけ、それより悪いものは使わない
+const GOOD_ACC_M = 100, FAIR_ACC_M = 500, RESYNC_M = 300;
+// 推定: 正確な位置が EST_START_MS 来なければ、駅間を平均の速さで進み駅で EST_DWELL_MS 止まるとして進める
+const EST_START_MS = 15000, EST_DWELL_MS = 30000, EST_MAX_MS = 20*60000, EST_DEFAULT_KMH = 45;
+let est = {active:false}, lastGood = null, lastRender = null, poorSeen = false, estTimer = null;
 let dirMode = "auto", autoDir = 0, lastFix = null, watchId = null, demoTimer = null, wakeLock = null;
 
 function geom(line){ // 路線の形（始発駅基準のメートル座標の折れ線）
@@ -368,6 +377,7 @@ function render(loc,now=Date.now()){
   $("endR").innerHTML = `${ST[ni][0]}<small>${atIdx>=0?"":"次の駅"}</small>`;
   $("train").style.left = (Math.max(0,Math.min(1,tt))*100)+"%";
   animateTrain({v,atIdx,offRoute,tt,now,loc,along,ni,dir});
+  lastRender = {along, atIdx, v, offRoute, dir, tunnel: theme==="tunnel"};
 
   // 路線図
   const items = $("route").children;
@@ -394,6 +404,7 @@ function buildRoute(){
   ST.forEach((s,k)=>{
     const li=document.createElement("li");
     if(!STOP[k]) li.className="pass";
+    else { li.dataset.k = k; li.title = "タップでこの駅に合わせる"; li.onclick = ()=>tapStation(k); }
     li.innerHTML = STOP[k] ? `<span>${s[0]}</span><span class="xfs">${xferChips(XFER[k])}</span><span class="tag"></span>`
                            : `<span>${s[0]}</span><span class="pv">通過</span><span class="tag"></span>`;
     ol.appendChild(li);
@@ -662,8 +673,113 @@ function resetTrain(){
 // キャラ電車をタップすると何か言う
 $("train").addEventListener("click", ()=>say(TAP_LINES[Math.floor(Math.random()*TAP_LINES.length)],{hop:true,force:true}));
 
+// ---- 位置が取れないときの推定 ----
+function estMps(){ return (LINE.estKmh || EST_DEFAULT_KMH)/3.6; }
+function curDir(){ return dirMode==="auto" ? (autoDir||1) : +dirMode; }
+
+// 線路沿いの位置 s(m) を locate と同じ形 {i,t,d,len} にする
+function locAt(s){
+  const N = ST.length, T = G.cum[N-1];
+  s = LOOP ? ((s%T)+T)%T : Math.max(0,Math.min(T,s));
+  let i = 0; while(i<N-2 && G.cum[i+1]<=s) i++;
+  const len = G.cum[i+1]-G.cum[i];
+  return {i, t: len ? (s-G.cum[i])/len : 0, d: 0, len};
+}
+
+// 位置 s から推定を始め直す（駅のそばならその駅で停車中から）
+function estFrom(s,now){
+  const dir = curDir(); autoDir = dir;
+  const near = ST.map((_,k)=>k).filter(k=>STOP[k]).find(k=>Math.abs(ds(G.cum[k],s))<NEAR_M*1.5);
+  if(near!==undefined){ est = {active:true, dir, phase:"dwell", A:wrap(near), t0:now, anchorAt:now}; return; }
+  const l = locAt(s), A = stopFrom(dir>0 ? l.i : l.i+1, -dir), B = stopFrom(dir>0 ? l.i+1 : l.i, dir);
+  const prog = ahead(G.cum[A], s, dir), L = ahead(G.cum[A], G.cum[B], dir);
+  est = {active:true, dir, phase:"run", A, B, L, t0: now - prog/estMps()*1000, anchorAt:now};
+}
+
+// 経過時間から推定位置を進めて表示する
+function estStep(now){
+  const e = est, mps = estMps();
+  for(let guard=0; guard<200; guard++){
+    if(e.phase==="dwell"){
+      if(now-e.t0 < EST_DWELL_MS) break;
+      const B = stopFrom(e.A+e.dir, e.dir);
+      if(B<0) break; // 終点
+      e.phase = "run"; e.B = B; e.L = ahead(G.cum[e.A], G.cum[B], e.dir); e.t0 += EST_DWELL_MS;
+    }else{
+      const runMs = e.L/mps*1000;
+      if(now-e.t0 < runMs) break;
+      e.phase = "dwell"; e.A = e.B; e.t0 += runMs;
+    }
+  }
+  const s = e.phase==="dwell" ? G.cum[e.A] : G.cum[e.A] + e.dir*Math.min(e.L, (now-e.t0)/1000*mps);
+  e.s = s;
+  render(locAt(s), now);
+  const min = Math.floor((now-e.anchorAt)/60000);
+  setStatus("est","現在地を推定中", min>0 ? `最後の位置から${min}分` : "");
+}
+
+// 時刻 t0 に位置 s にいたとして推定を始め、今まで進める
+function estStart(s,t0){
+  estFrom(s,t0); track = []; band = {key:null,t:0};
+  $("sign").classList.add("est");
+  estStep(Date.now());
+}
+
+function estStop(){
+  if(!est.active) return;
+  est = {active:false}; track = []; band = {key:null,t:0};
+  $("sign").classList.remove("est");
+}
+
+// 1秒ごと: 推定を始めるか判断し、推定中なら進める
+function estTick(){
+  const now = Date.now();
+  if(est.active){
+    if(now-est.anchorAt > EST_MAX_MS){ estStop(); setStatus(false,"位置が分かりません"); $("lead").textContent="位置が分かりません"; return; }
+    estStep(now); return;
+  }
+  if(watchId===null || !lastGood || !lastRender || lastRender.offRoute) return;
+  if(now-lastGood.t > EST_START_MS && (lastGood.moving || lastGood.tunnel || poorSeen)) estStart(lastGood.s, lastGood.t);
+}
+
+// 位置情報を1つ受け取ったとき（精度で扱いを分ける）
+function onFix(lat,lng,acc,t){
+  if(acc <= GOOD_ACC_M){
+    estStop(); poorSeen = false;
+    setStatus(true,"現在地を表示中",`精度 ±${Math.round(acc)}m`);
+    lastFix = [lat,lng];
+    render(locate(lat,lng),t);
+    lastGood = {t, s:lastRender.along, moving:lastRender.v>=MOVING_MPS, tunnel:lastRender.tunnel};
+    suggestLines(lat,lng,acc);
+    return;
+  }
+  poorSeen = true;
+  if(acc > FAIR_ACC_M) return; // 位置としては使わない
+  const loc = locate(lat,lng);
+  if(loc.d > Math.max(acc, OFF_M)) return;
+  const s = G.cum[loc.i] + loc.t*loc.len;
+  if(est.active){
+    if(Math.abs(ds(est.s ?? s, s)) > Math.max(acc, RESYNC_M)){ estFrom(s,t); track = []; estStep(t); }
+    else est.anchorAt = t; // 推定と合っている
+  }else if(!lastGood || t-lastGood.t > EST_START_MS) estStart(s,t);
+}
+
+// 路線図の駅をタップ: 今その駅にいるとして推定を始める
+function tapStation(k){
+  if(demoTimer) stopAll();
+  if(watchId===null) startTracking();
+  if(!estTimer) estTimer = setInterval(estTick, 1000); // 位置情報が使えなくても推定は進める
+  const now = Date.now();
+  estFrom(G.cum[k],now); est.anchorAt = now; track = []; band = {key:null,t:0};
+  $("sign").classList.add("est");
+  estStep(now);
+  say(`${ST[k][0]}に合わせたよ`,{hop:true,force:true});
+  $("msg").textContent = "向きが違うときは方面ボタンで変えてね。正確な位置が取れたら自動でそちらに切り替わります。";
+}
+
 function setStatus(live,text,acc){
-  $("status").classList.toggle("live",live);
+  $("status").classList.toggle("live",live===true);
+  $("status").classList.toggle("est",live==="est");
   $("statusText").textContent=text;
   $("acc").textContent=acc||"";
 }
@@ -680,25 +796,29 @@ function stopAll(){
   wakeLock=null;
   $("startBtn").textContent="位置情報を開始"; $("demoBtn").textContent="デモ走行";
   setStatus(false,"停止中"); resetTrain();
+  estStop(); clearInterval(estTimer); estTimer = null; lastGood = null; poorSeen = false;
 }
 
-$("startBtn").onclick=()=>{
-  if(!LINE) return;
-  if(watchId!==null){stopAll();return;}
+function startTracking(){
   stopAll();
   if(!("geolocation" in navigator)){ $("msg").textContent="この画面では位置情報が使えません。Safariで直接開いてください。"; return; }
   setStatus(false,"位置を取得中…"); track = []; band = {key:null,t:0}; resetTrain();
   keepAwake();
   watchId = navigator.geolocation.watchPosition(p=>{
-    setStatus(true,"現在地を表示中",`精度 ±${Math.round(p.coords.accuracy)}m`);
-    lastFix = [p.coords.latitude,p.coords.longitude];
-    render(locate(...lastFix),p.timestamp);
-    suggestLines(lastFix[0],lastFix[1],p.coords.accuracy);
+    onFix(p.coords.latitude,p.coords.longitude,p.coords.accuracy,p.timestamp);
   },err=>{
+    if(err.code!==1 && est.active) return; // 推定中なら、地下で取れないのは想定どおり
     const m = err.code===1 ? "位置情報が許可されていません。この画面で許可できない場合は、Safariで直接開いてください。" : "位置を取得できませんでした。電波の良い場所で再度お試しください。";
     $("msg").textContent=m; setStatus(false,"取得できません");
   },{enableHighAccuracy:true,maximumAge:3000,timeout:20000});
+  estTimer = setInterval(estTick, 1000);
   $("startBtn").textContent="停止";
+}
+
+$("startBtn").onclick=()=>{
+  if(!LINE) return;
+  if(watchId!==null){stopAll();return;}
+  startTracking();
 };
 
 $("demoBtn").onclick=()=>{
@@ -722,6 +842,7 @@ $("demoBtn").onclick=()=>{
 document.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{
   dirMode=b.dataset.dir;
   document.querySelectorAll(".seg button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  if(est.active && est.s!==undefined){ const now = Date.now(), a = est.anchorAt; estFrom(est.s,now); est.anchorAt = a; track = []; band = {key:null,t:0}; estStep(now); }
 });
 
 function initLine(line){
@@ -753,6 +874,7 @@ function initLine(line){
   $("route").replaceChildren();
   buildRoute();
   $("lineSel").value = line.id;
+  estStop(); lastGood = null;
   if(watchId!==null && lastFix) render(locate(...lastFix));
   else if(watchId===null) $("lead").textContent="位置情報を開始してください";
 }
