@@ -735,7 +735,13 @@ function estStop(){
 function estTick(){
   const now = Date.now();
   if(est.active){
-    if(now-est.anchorAt > EST_MAX_MS){ estStop(); setStatus(false,"位置が分かりません"); $("lead").textContent="位置が分かりません"; return; }
+    if(now-est.anchorAt > EST_MAX_MS){ // 長く合わせ直せないときは推定をやめ、表示を待機中に戻す
+      estStop(); lastGood = null; setStatus(false,"位置が分かりません");
+      showLineIdle(); $("lead").textContent = "位置が分かりません"; $("remain").textContent = ""; $("xfer").replaceChildren();
+      document.querySelectorAll(".route .me").forEach(e=>e.remove());
+      resetTrain(); sceneV = 0;
+      return;
+    }
     estStep(now); return;
   }
   if(watchId===null || !lastGood || !lastRender || lastRender.offRoute) return;
